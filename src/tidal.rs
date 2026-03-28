@@ -126,14 +126,15 @@ impl TidalClient {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("tidal.py")))
             .filter(|p| p.exists())
-            .or_else(|| {
-                std::env::current_dir().ok().map(|d| d.join("tidal.py"))
-            })
-            .filter(|p| p.exists())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "tidal.py".to_string());
-        //eprintln!("[tidal] script_path: {}", script_path);
+
         Self { quality: Quality::Lossless, script_path }
+    }
+
+    /// Constructor para usar desde tareas en background
+    pub fn with_path_and_quality(script_path: String, quality: Quality) -> Self {
+        Self { quality, script_path }
     }
 
     /// Ejecuta tidal.py con los args dados y devuelve el stdout.
@@ -224,7 +225,6 @@ impl TidalClient {
 
     pub async fn get_stream_info(&self, track_id: u64) -> Result<StreamInfo> {
         let id_str = track_id.to_string();
-        //eprintln!("[stream] track_id={} quality={}", track_id, self.quality.as_api_str()); // ← temporal
         let stdout = self.run(&["stream", &id_str, self.quality.as_api_str()])?;
         let resp: StreamResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
