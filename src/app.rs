@@ -1,6 +1,11 @@
-use crate::player::{Player, PlayerState, TrackInfo};
-use crate::tidal::{Quality, TidalClient, Track, StreamInfo};
+use crate::player::{Player, TrackInfo};
+use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo};
 use tokio::sync::mpsc::UnboundedSender;
+use image::DynamicImage;
+//use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::protocol::StatefulProtocol;
+//
+// use ratatui_image::ResizeEncodeRender;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
@@ -12,9 +17,9 @@ pub enum InputMode {
 pub enum Tab {
     Search,
     Queue,
+    Now,
 }
 
-/// Eventos que llegan desde tareas en background al event loop principal
 pub enum AppEvent {
     SearchDone(Result<Vec<Track>, String>),
     StreamReady { track: Track, info: StreamInfo, queue_index: usize },
@@ -23,6 +28,8 @@ pub enum AppEvent {
     AuthDone,
     AuthError(String),
     StatusMsg(String),
+    CoverReady { info: CoverInfo, image: DynamicImage },
+    CoverError,
 }
 
 pub struct App {
@@ -49,37 +56,49 @@ pub struct App {
     pub poll_handle: Option<tokio::task::JoinHandle<()>>,
 
     pub event_tx: Option<UnboundedSender<AppEvent>>,
+
+    // Pestaña "Ahora"
+    pub cover_info:       Option<CoverInfo>,
+    pub cover_image:      Option<DynamicImage>,
+    //pub cover_proto:      Option<Box<dyn StatefulProtocol>>,
+    //pub cover_proto: Option<StatefulProtocol>,
+    pub cover_proto: Option<StatefulProtocol>,
+    pub current_track_id: Option<u64>,
+    pub last_img_area: Option<(u16, u16)>,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            tidal:          TidalClient::new(),
-            player:         Player::new(),
-            input_mode:     InputMode::Normal,
-            active_tab:     Tab::Search,
-            search_input:   String::new(),
-            search_results: Vec::new(),
-            queue:          Vec::new(),
-            selected:       0,
-            queue_index:    None,
-            authenticated:  false,
-            status_msg:     String::new(),
-            loading:        false,
-            auto_advance:   false,
-            device_code:    None,
-            user_code:      None,
-            auth_url:       None,
-            poll_handle:    None,
-            event_tx:       None,
+            tidal:            TidalClient::new(),
+            player:           Player::new(),
+            input_mode:       InputMode::Normal,
+            active_tab:       Tab::Search,
+            search_input:     String::new(),
+            search_results:   Vec::new(),
+            queue:            Vec::new(),
+            selected:         0,
+            queue_index:      None,
+            authenticated:    false,
+            status_msg:       String::new(),
+            loading:          false,
+            auto_advance:     false,
+            device_code:      None,
+            user_code:        None,
+            auth_url:         None,
+            poll_handle:      None,
+            event_tx:         None,
+            cover_info:       None,
+            cover_image:      None,
+            cover_proto:      None,
+            current_track_id: None,
+            last_img_area: None,
         }
     }
 
     fn tx(&self) -> UnboundedSender<AppEvent> {
         self.event_tx.clone().expect("event_tx no inicializado")
     }
-
-    // ── Manejo de eventos entrantes ───────────────────────────────────────
 
     pub fn handle_event(&mut self, event: AppEvent) {
         match event {
@@ -99,7 +118,8 @@ impl App {
                 self.loading    = false;
             }
             AppEvent::StreamReady { track, info, queue_index } => {
-                self.queue_index = Some(queue_index);
+                self.queue_index      = Some(queue_index);
+                self.current_track_id = Some(track.id);
                 let ti = TrackInfo {
                     title:       track.title.clone(),
                     artist:      track.artist_names(),
@@ -117,6 +137,7 @@ impl App {
                 self.player.play(&info.url, ti);
                 self.loading      = false;
                 self.auto_advance = true;
+                self.load_cover_bg(track.id);
             }
             AppEvent::StreamError(e) => {
                 self.status_msg = format!("✗ Error stream: {e}");
@@ -144,6 +165,15 @@ impl App {
             AppEvent::StatusMsg(msg) => {
                 self.status_msg = msg;
             }
+            AppEvent::CoverReady { info, image } => {
+                self.cover_info  = Some(info);
+                self.cover_image = Some(image);
+                self.cover_proto = None; // resetear para que se recree con nueva imagen
+            }
+            AppEvent::CoverError => {
+                self.cover_image = None;
+                self.cover_proto = None;
+            }
         }
     }
 
@@ -166,8 +196,7 @@ impl App {
 
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
-            let result = client.search(&query, 20).await
-                .map_err(|e| e.to_string());
+            let result = client.search(&query, 20).await.map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::SearchDone(result));
         });
     }
@@ -181,10 +210,10 @@ impl App {
         let track = match self.active_tab {
             Tab::Search => self.search_results.get(self.selected).cloned(),
             Tab::Queue  => self.queue.get(self.selected).cloned(),
+            Tab::Now    => return,
         };
         let Some(track) = track else { return };
 
-        // Agregar a cola si viene de búsqueda
         let queue_index = if self.active_tab == Tab::Search {
             if !self.queue.iter().any(|t| t.id == track.id) {
                 self.queue.push(track.clone());
@@ -221,20 +250,44 @@ impl App {
         self.loading    = true;
         self.status_msg = format!("⟳ Obteniendo stream: {}...", track.title);
         self.player.stop();
+        self.cover_image = None;
+        self.cover_info  = None;
+        self.cover_proto = None;
 
-        let tx     = self.tx();
-        let script = self.tidal.script_path.clone();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
 
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             match client.get_stream_info(track.id).await {
-                Ok(info) => {
-                    let _ = tx.send(AppEvent::StreamReady { track, info, queue_index });
-                }
-                Err(e) => {
-                    let _ = tx.send(AppEvent::StreamError(e.to_string()));
-                }
+                Ok(info) => { let _ = tx.send(AppEvent::StreamReady { track, info, queue_index }); }
+                Err(e)   => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
+    }
+
+    fn load_cover_bg(&mut self, track_id: u64) {
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            let cover_info = match client.get_cover(track_id).await {
+                Ok(c)  => c,
+                Err(_) => { let _ = tx.send(AppEvent::CoverError); return; }
+            };
+            let image_bytes = match reqwest::get(&cover_info.url).await {
+                Ok(r)  => match r.bytes().await {
+                    Ok(b)  => b,
+                    Err(_) => { let _ = tx.send(AppEvent::CoverError); return; }
+                },
+                Err(_) => { let _ = tx.send(AppEvent::CoverError); return; }
+            };
+            match image::load_from_memory(&image_bytes) {
+                Ok(img) => { let _ = tx.send(AppEvent::CoverReady { info: cover_info, image: img }); }
+                Err(_)  => { let _ = tx.send(AppEvent::CoverError); }
             }
         });
     }
@@ -243,8 +296,8 @@ impl App {
         self.loading    = true;
         self.status_msg = "Iniciando login...".to_string();
 
-        let tx     = self.tx();
-        let script = self.tidal.script_path.clone();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
 
         tokio::spawn(async move {
@@ -253,18 +306,16 @@ impl App {
                 Ok((device_code, user_code, url)) => {
                     let _ = tx.send(AppEvent::AuthStarted { url, code: user_code, device_code });
                 }
-                Err(e) => {
-                    let _ = tx.send(AppEvent::AuthError(e.to_string()));
-                }
+                Err(e) => { let _ = tx.send(AppEvent::AuthError(e.to_string())); }
             }
         });
     }
 
     pub fn poll_auth_bg(&mut self) {
-        let tx     = self.tx();
-        let script = self.tidal.script_path.clone();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        let code   = self.device_code.clone().unwrap_or_default();
+        let code    = self.device_code.clone().unwrap_or_default();
 
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
@@ -276,8 +327,6 @@ impl App {
         });
     }
 
-    // ── Helpers síncronos ─────────────────────────────────────────────────
-
     pub fn set_quality(&mut self, q: Quality) {
         self.tidal.quality = q;
         self.status_msg = format!("Calidad: {}", q.label());
@@ -286,7 +335,8 @@ impl App {
     pub fn next_tab(&mut self) {
         self.active_tab = match self.active_tab {
             Tab::Search => Tab::Queue,
-            Tab::Queue  => Tab::Search,
+            Tab::Queue  => Tab::Now,
+            Tab::Now    => Tab::Search,
         };
         self.selected = 0;
     }
@@ -295,6 +345,7 @@ impl App {
         match self.active_tab {
             Tab::Search => self.search_results.len(),
             Tab::Queue  => self.queue.len(),
+            Tab::Now    => 0,
         }
     }
 
@@ -310,7 +361,6 @@ impl App {
         }
     }
 
-    // ── Auth poll síncrono (solo para load_session al inicio) ─────────────
     pub async fn poll_auth(&mut self) -> bool {
         if let Some(code) = self.device_code.clone() {
             match self.tidal.poll_device_token(&code).await {

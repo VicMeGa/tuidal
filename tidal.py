@@ -160,6 +160,20 @@ def _track_dict(t: tidalapi.Track) -> dict:
         "explicit":      getattr(t, "explicit", False),
     }
 
+# ─── Charge album cover ───────────────────────────────────────────────────────
+def cmd_cover(track_id: int):
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        track = session.track(track_id)
+        url   = track.album.image(320)
+        out({"url": url, "title": track.name, "artist": track.artist.name, "album": track.album.name})
+    except Exception as e:
+        err(str(e))
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -182,6 +196,8 @@ if __name__ == "__main__":
             cmd_stream(int(track_id))
         case ["stream", track_id, quality]:
             cmd_stream(int(track_id), quality)
+        case ["cover", track_id]:
+            cmd_cover(int(track_id))
         case _:
             err(f"Comando desconocido: {args}")
             sys.exit(1)
