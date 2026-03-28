@@ -28,8 +28,9 @@ def err(msg: str):
     print(msg, file=sys.stderr)
     out({"error": msg})
 
-def make_session() -> tidalapi.Session:
-    return tidalapi.Session()
+def make_session(quality=None) -> tidalapi.Session:
+    config = tidalapi.Config(quality=quality) if quality else tidalapi.Config()
+    return tidalapi.Session(config)
 
 def load_session(session: tidalapi.Session) -> bool:
     try:
@@ -108,30 +109,42 @@ def cmd_search(query: str, limit: int = 20):
         err(str(e))
 
 def cmd_stream(track_id: int, quality_str: str = "LOSSLESS"):
-    session = make_session()
-    if not load_session(session):
-        err("No autenticado")
-        return
-
     quality_map = {
         "HI_RES_LOSSLESS": tidalapi.Quality.hi_res_lossless,
-        "LOSSLESS":        tidalapi.Quality.high_lossless,  # ← era lossless
-        "HIGH":            tidalapi.Quality.low_320k,       # ← era high
+        "LOSSLESS":        tidalapi.Quality.high_lossless,
+        "HIGH":            tidalapi.Quality.low_320k,
     }
-    session.config.quality = quality_map.get(quality_str, tidalapi.Quality.high_lossless)
 
-    try:
-        track = session.track(track_id)
-        url   = track.get_url()
-        out({
-            "url":         url,
-            "codec":       "flac",
-            "bit_depth":   24 if quality_str == "HI_RES_LOSSLESS" else 16,
-            "sample_rate": 96000 if quality_str == "HI_RES_LOSSLESS" else 44100,
-            "mime_type":   "audio/flac",
-        })
-    except Exception as e:
-        err(str(e))
+    fallback_chain = {
+        "HI_RES_LOSSLESS": ["HI_RES_LOSSLESS", "LOSSLESS", "HIGH"],
+        "LOSSLESS":        ["LOSSLESS", "HIGH"],
+        "HIGH":            ["HIGH"],
+    }
+
+    last_error = ""
+    for q_str in fallback_chain.get(quality_str, ["LOSSLESS", "HIGH"]):
+        # Crear sesión nueva con la calidad correcta en cada intento
+        session = make_session(quality=quality_map[q_str])
+        if not load_session(session):
+            err("No autenticado")
+            return
+        try:
+            track = session.track(track_id)
+            url   = track.get_url()
+            out({
+                "url":         url,
+                "codec":       "flac" if q_str in ("HI_RES_LOSSLESS", "LOSSLESS") else "aac",
+                "bit_depth":   24 if q_str == "HI_RES_LOSSLESS" else 16,
+                "sample_rate": 96000 if q_str == "HI_RES_LOSSLESS" else 44100,
+                "mime_type":   "audio/flac" if q_str in ("HI_RES_LOSSLESS", "LOSSLESS") else "audio/aac",
+                "quality":     q_str,
+            })
+            return
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    err(f"No se pudo obtener stream en ninguna calidad: {last_error}")
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

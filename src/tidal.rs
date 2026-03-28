@@ -132,7 +132,7 @@ impl TidalClient {
             .filter(|p| p.exists())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "tidal.py".to_string());
-        eprintln!("[tidal] script_path: {}", script_path);
+        //eprintln!("[tidal] script_path: {}", script_path);
         Self { quality: Quality::Lossless, script_path }
     }
 
@@ -224,6 +224,7 @@ impl TidalClient {
 
     pub async fn get_stream_info(&self, track_id: u64) -> Result<StreamInfo> {
         let id_str = track_id.to_string();
+        //eprintln!("[stream] track_id={} quality={}", track_id, self.quality.as_api_str()); // ← temporal
         let stdout = self.run(&["stream", &id_str, self.quality.as_api_str()])?;
         let resp: StreamResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
