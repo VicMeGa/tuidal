@@ -4,7 +4,7 @@ mod player;
 mod app;
 
 use anyhow::Result;
-use app::{App, AppEvent, InputMode};
+use app::{App, AppEvent, InputMode, Tab};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -110,7 +110,6 @@ async fn run_app<B: ratatui::backend::Backend>(
         }
     }
 }
-
 fn handle_normal(key: KeyCode, app: &mut App) {
     match key {
         KeyCode::Char('q') => {
@@ -122,13 +121,36 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             app.search_input.clear();
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
-            if !app.authenticated {
-                app.start_login_bg();
+            if !app.authenticated { app.start_login_bg(); }
+        }
+        KeyCode::Char('i') => {
+            if app.authenticated { app.load_library_bg(); }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.active_tab == Tab::Library {
+                let max = app.playlists.len() + app.mixes.len();
+                if max > 0 { app.library_selected = (app.library_selected + 1) % max; }
+            } else {
+                app.next_track();
             }
         }
-        KeyCode::Down | KeyCode::Char('j') => app.next_track(),
-        KeyCode::Up   | KeyCode::Char('k') => app.prev_track(),
-        KeyCode::Enter => app.play_selected_bg(),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if app.active_tab == Tab::Library {
+                let max = app.playlists.len() + app.mixes.len();
+                if max > 0 {
+                    app.library_selected = if app.library_selected == 0 { max - 1 } else { app.library_selected - 1 };
+                }
+            } else {
+                app.prev_track();
+            }
+        }
+        KeyCode::Enter => {
+            if app.active_tab == Tab::Library {
+                app.library_select_enter();
+            } else {
+                app.play_selected_bg();
+            }
+        }
         KeyCode::Char(' ') => app.player.toggle_pause(),
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),

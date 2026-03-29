@@ -93,6 +93,35 @@ pub struct CoverInfo {
     pub album:  String,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Playlist {
+    pub uuid:             String,
+    pub title:            String,
+    pub number_of_tracks: u32,
+    pub duration:         u64,
+    #[serde(rename = "type")]
+    pub playlist_type:    String,   // "USER", "EDITORIAL", "ARTIST"
+    pub public_playlist:  Option<bool>,
+    pub image:            Option<String>,
+    pub square_image:     Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mix {
+    pub id:    String,
+    pub title: String,
+    pub sub_title: Option<String>,
+}
+
+// Para deserializar tracks dentro de un mix (vienen envueltos en "item")
+#[derive(Debug, Deserialize)]
+struct MixItem {
+    item: Track,
+}
 // ─── Respuestas internas ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -248,5 +277,32 @@ impl TidalClient {
             artist: resp.artist.unwrap_or_default(),
             album:  resp.album.unwrap_or_default(),
         })
+    }
+    pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>> {
+        let stdout = self.run(&["playlists"])?;
+        let playlists: Vec<Playlist> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(playlists)
+    }
+
+    pub async fn get_playlist_tracks(&self, uuid: &str) -> Result<Vec<Track>> {
+        let stdout = self.run(&["playlist_tracks", uuid])?;
+        let tracks: Vec<Track> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(tracks)
+    }
+
+    pub async fn get_user_mixes(&self) -> Result<Vec<Mix>> {
+        let stdout = self.run(&["mixes"])?;
+        let mixes: Vec<Mix> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(mixes)
+    }
+
+    pub async fn get_mix_tracks(&self, mix_id: &str) -> Result<Vec<Track>> {
+        let stdout = self.run(&["mix_tracks", mix_id])?;
+        let tracks: Vec<Track> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(tracks)
     }
 }

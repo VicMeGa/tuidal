@@ -77,6 +77,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             tab_span("Cola", Tab::Queue, &app.active_tab),
             Span::styled("  ", Style::default()),
             tab_span("Ahora", Tab::Now, &app.active_tab),
+            Span::styled("  ", Style::default()),
+            tab_span("Biblioteca", Tab::Library, &app.active_tab),
         ]))
         .block(Block::default()
             .borders(Borders::BOTTOM)
@@ -117,6 +119,7 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
         Tab::Search => draw_search_tab(f, app, area),
         Tab::Queue  => draw_queue_tab(f, app, area),
         Tab::Now    => draw_now_tab(f, app, area),
+        Tab::Library => draw_library_tab(f, app, area),
     }
 }
 
@@ -493,6 +496,96 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().bg(BG2)))
         .wrap(Wrap { trim: false }),
         popup,
+    );
+}
+
+fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
+    let total = app.playlists.len() + app.mixes.len();
+    if total == 0 {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                "  ⟳ Cargando biblioteca..."
+            } else {
+                "  Presiona 'i' para cargar playlists y mixes"
+            })
+            .style(Style::default().fg(MUTED))
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM))
+                .title(Span::styled(" Biblioteca ", Style::default().fg(MUTED)))),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<Row> = app.playlists.iter().enumerate()
+        .map(|(i, p)| {
+            let is_sel = i == app.library_selected;
+            Row::new(vec![
+                Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
+                Cell::from(Span::styled(
+                    truncate(&p.title, 40),
+                    Style::default().fg(if is_sel { ACCENT } else { TEXT })
+                        .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                )),
+                Cell::from(Span::styled(
+                    format!("{} tracks", p.number_of_tracks),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
+            ])
+            .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
+        })
+        .chain(app.mixes.iter().enumerate().map(|(i, m)| {
+            let idx    = app.playlists.len() + i;
+            let is_sel = idx == app.library_selected;
+            Row::new(vec![
+                Cell::from(Span::styled("⊛ ", Style::default().fg(GOLD))),
+                Cell::from(Span::styled(
+                    truncate(&m.title, 40),
+                    Style::default().fg(if is_sel { GOLD } else { TEXT })
+                        .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                )),
+                Cell::from(Span::styled(
+                    m.sub_title.as_deref().unwrap_or("").to_string(),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled("Mix", Style::default().fg(GOLD))),
+            ])
+            .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
+        }))
+        .collect();
+
+    let header = Row::new(vec![
+        Cell::from(""),
+        Cell::from(Span::styled("Nombre",  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Info",    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Tipo",    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+    ]).style(Style::default().bg(BG2));
+
+    let mut state = ratatui::widgets::TableState::default();
+    state.select(Some(app.library_selected));
+
+    f.render_stateful_widget(
+        Table::new(items, [
+            Constraint::Length(3),
+            Constraint::Min(30),
+            Constraint::Length(20),
+            Constraint::Length(10),
+        ])
+        .header(header)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM))
+            .title(Span::styled(
+                format!(" Biblioteca ({} playlists, {} mixes) ", app.playlists.len(), app.mixes.len()),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )))
+        .row_highlight_style(Style::default().bg(BG3)),
+        area,
+        &mut state,
     );
 }
 

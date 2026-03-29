@@ -172,6 +172,71 @@ def cmd_cover(track_id: int):
         out({"url": url, "title": track.name, "artist": track.artist.name, "album": track.album.name})
     except Exception as e:
         err(str(e))
+        
+def cmd_playlists():
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        playlists = session.user.playlists()
+        result = []
+        for p in playlists:
+            result.append({
+                "uuid":             str(p.id),
+                "title":            p.name,
+                "numberOfTracks":   p.num_tracks,
+                "duration":         p.duration or 0,
+                "type":             str(getattr(p, 'type', 'USER')),
+                "publicPlaylist":   getattr(p, 'public', False),
+            })
+        out(result)
+    except Exception as e:
+        err(str(e))
+
+def cmd_playlist_tracks(uuid: str):
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        playlist = session.playlist(uuid)
+        tracks   = playlist.tracks()
+        out([_track_dict(t) for t in tracks])
+    except Exception as e:
+        err(str(e))
+
+def cmd_mixes():
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        mixes  = session.mixes()
+        result = []
+        for m in mixes:
+            result.append({
+                "id":       str(m.id),
+                "title":    m.title,
+                "subTitle": getattr(m, 'sub_title', None),
+            })
+        out(result)
+    except Exception as e:
+        err(str(e))
+
+def cmd_mix_tracks(mix_id: str):
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        mix    = session.mix(mix_id)
+        items  = mix.items()
+        # mix.items() devuelve objetos Track directamente
+        tracks = [t for t in items if isinstance(t, tidalapi.Track)]
+        out([_track_dict(t) for t in tracks])
+    except Exception as e:
+        err(str(e))
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -198,6 +263,14 @@ if __name__ == "__main__":
             cmd_stream(int(track_id), quality)
         case ["cover", track_id]:
             cmd_cover(int(track_id))
+        case ["playlists"]:
+            cmd_playlists()
+        case ["playlist_tracks", uuid]:
+            cmd_playlist_tracks(uuid)
+        case ["mixes"]:
+            cmd_mixes()
+        case ["mix_tracks", mix_id]:
+            cmd_mix_tracks(mix_id)
         case _:
             err(f"Comando desconocido: {args}")
             sys.exit(1)

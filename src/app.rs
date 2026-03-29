@@ -1,12 +1,9 @@
 use crate::player::{Player, TrackInfo};
-use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo};
+use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo, Playlist, Mix};
 use tokio::sync::mpsc::UnboundedSender;
 use image::DynamicImage;
-//use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::picker::Picker;
-//
-// use ratatui_image::ResizeEncodeRender;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
@@ -19,11 +16,17 @@ pub enum Tab {
     Search,
     Queue,
     Now,
+    Library,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LibraryMode {
+    List,
+    Tracks,
 }
 
 pub enum AppEvent {
     SearchDone(Result<Vec<Track>, String>),
-    // en el enum AppEvent:
     StreamReady { track: Track, info: StreamInfo, queue_index: usize, generation: u64 },
     StreamError(String),
     AuthStarted { url: String, code: String, device_code: String },
@@ -32,6 +35,8 @@ pub enum AppEvent {
     StatusMsg(String),
     CoverReady { info: CoverInfo, image: DynamicImage },
     CoverError,
+    LibraryLoaded { playlists: Vec<Playlist>, mixes: Vec<Mix> },
+    PlaylistTracksLoaded(Vec<Track>),
 }
 
 pub struct App {
@@ -59,17 +64,18 @@ pub struct App {
 
     pub event_tx: Option<UnboundedSender<AppEvent>>,
 
-    // Pestaña "Ahora"
     pub cover_info:       Option<CoverInfo>,
     pub cover_image:      Option<DynamicImage>,
-    //pub cover_proto:      Option<Box<dyn StatefulProtocol>>,
-    //pub cover_proto: Option<StatefulProtocol>,
-    pub cover_proto: Option<StatefulProtocol>,
-    pub picker: Option<Picker>,
+    pub cover_proto:      Option<StatefulProtocol>,
+    pub picker:           Option<Picker>,
+    pub last_img_area:    Option<(u16, u16)>,
     pub current_track_id: Option<u64>,
-    pub last_img_area: Option<(u16, u16)>,
-    //pub picker: Option<ratatui_image::picker::Picker>,
-    pub stream_generation: u64,  // incrementa con cada stream solicitado
+    pub stream_generation: u64,
+
+    pub playlists:        Vec<Playlist>,
+    pub mixes:            Vec<Mix>,
+    pub library_selected: usize,
+    pub library_mode:     LibraryMode,
 }
 
 impl App {
@@ -96,11 +102,14 @@ impl App {
             cover_info:       None,
             cover_image:      None,
             cover_proto:      None,
+            picker:           None,
+            last_img_area:    None,
             current_track_id: None,
-            last_img_area: None,
-            picker: None,
             stream_generation: 0,
-            
+            playlists:        Vec::new(),
+            mixes:            Vec::new(),
+            library_selected: 0,
+            library_mode:     LibraryMode::List,
         }
     }
 
@@ -126,11 +135,7 @@ impl App {
                 self.loading    = false;
             }
             AppEvent::StreamReady { track, info, queue_index, generation } => {
-                // ← primero el guard, ANTES de modificar nada
-                if generation != self.stream_generation {
-                    return;
-                }
-                // ahora sí actualizar estado
+                if generation != self.stream_generation { return; }
                 self.queue_index      = Some(queue_index);
                 self.current_track_id = Some(track.id);
                 let ti = TrackInfo {
@@ -179,18 +184,35 @@ impl App {
                 self.status_msg = msg;
             }
             AppEvent::CoverReady { info, image } => {
-                self.cover_info  = Some(info);
-                self.cover_image = Some(image);
-                self.cover_proto = None; // resetear para que se recree con nueva imagen
+                self.cover_info    = Some(info);
+                self.cover_image   = Some(image);
+                self.cover_proto   = None;
+                self.last_img_area = None;
             }
             AppEvent::CoverError => {
                 self.cover_image = None;
                 self.cover_proto = None;
             }
+            AppEvent::LibraryLoaded { playlists, mixes } => {
+                self.playlists  = playlists;
+                self.mixes      = mixes;
+                self.active_tab = Tab::Library;
+                self.loading    = false;
+                self.status_msg = format!(
+                    "✓ {} playlists, {} mixes",
+                    self.playlists.len(), self.mixes.len()
+                );
+            }
+            AppEvent::PlaylistTracksLoaded(tracks) => {
+                self.queue       = tracks;
+                self.queue_index = None;
+                self.selected    = 0;
+                self.active_tab  = Tab::Queue;
+                self.loading     = false;
+                self.status_msg  = format!("✓ {} tracks cargados", self.queue.len());
+            }
         }
     }
-
-    // ── Operaciones en background ─────────────────────────────────────────
 
     pub fn do_search_bg(&mut self) {
         if !self.authenticated {
@@ -198,15 +220,12 @@ impl App {
             return;
         }
         if self.search_input.is_empty() { return; }
-
         self.loading    = true;
         self.status_msg = format!("Buscando \"{}\"...", self.search_input);
-
         let tx      = self.tx();
         let query   = self.search_input.clone();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             let result = client.search(&query, 20).await.map_err(|e| e.to_string());
@@ -219,14 +238,13 @@ impl App {
             self.status_msg = "Inicia sesión primero (L)".to_string();
             return;
         }
-
         let track = match self.active_tab {
-            Tab::Search => self.search_results.get(self.selected).cloned(),
-            Tab::Queue  => self.queue.get(self.selected).cloned(),
-            Tab::Now    => return,
+            Tab::Search  => self.search_results.get(self.selected).cloned(),
+            Tab::Queue   => self.queue.get(self.selected).cloned(),
+            Tab::Now     => return,
+            Tab::Library => return,
         };
         let Some(track) = track else { return };
-
         let queue_index = if self.active_tab == Tab::Search {
             if !self.queue.iter().any(|t| t.id == track.id) {
                 self.queue.push(track.clone());
@@ -235,7 +253,6 @@ impl App {
         } else {
             self.selected
         };
-
         self.stream_track_bg(track, queue_index);
     }
 
@@ -260,30 +277,23 @@ impl App {
     }
 
     fn stream_track_bg(&mut self, track: Track, queue_index: usize) {
-        self.auto_advance = false;
+        self.auto_advance      = false;
         self.stream_generation += 1;
         let generation = self.stream_generation;
-        self.loading    = true;
-        self.status_msg = format!("⟳ Obteniendo stream: {}...", track.title);
-        self.player.stop();
+        self.loading     = true;
+        self.status_msg  = format!("⟳ Obteniendo stream: {}...", track.title);
         self.cover_image = None;
         self.cover_info  = None;
         self.cover_proto = None;
-
-        // Capturar ANTES del spawn — el closure move necesita owned values
+        self.player.stop();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             match client.get_stream_info(track.id).await {
-                Ok(info) => {
-                    let _ = tx.send(AppEvent::StreamReady { track, info, queue_index, generation });
-                }
-                Err(e) => {
-                    let _ = tx.send(AppEvent::StreamError(e.to_string()));
-                }
+                Ok(info) => { let _ = tx.send(AppEvent::StreamReady { track, info, queue_index, generation }); }
+                Err(e)   => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
             }
         });
     }
@@ -292,7 +302,6 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             let cover_info = match client.get_cover(track_id).await {
@@ -316,11 +325,9 @@ impl App {
     pub fn start_login_bg(&mut self) {
         self.loading    = true;
         self.status_msg = "Iniciando login...".to_string();
-
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             match client.start_device_auth().await {
@@ -337,7 +344,6 @@ impl App {
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
         let code    = self.device_code.clone().unwrap_or_default();
-
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             match client.poll_device_token(&code).await {
@@ -348,6 +354,65 @@ impl App {
         });
     }
 
+    pub fn load_library_bg(&mut self) {
+        if !self.authenticated { return; }
+        self.loading    = true;
+        self.status_msg = "⟳ Cargando biblioteca...".to_string();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client    = TidalClient::with_path_and_quality(script, quality);
+            let playlists = client.get_user_playlists().await.unwrap_or_default();
+            let mixes     = client.get_user_mixes().await.unwrap_or_default();
+            let _ = tx.send(AppEvent::LibraryLoaded { playlists, mixes });
+        });
+    }
+
+    pub fn load_playlist_tracks_bg(&mut self, uuid: String) {
+        self.loading    = true;
+        self.status_msg = "⟳ Cargando playlist...".to_string();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            match client.get_playlist_tracks(&uuid).await {
+                Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
+                Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
+    }
+
+    pub fn load_mix_tracks_bg(&mut self, mix_id: String) {
+        self.loading    = true;
+        self.status_msg = "⟳ Cargando mix...".to_string();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            match client.get_mix_tracks(&mix_id).await {
+                Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
+                Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
+    }
+
+    pub fn library_select_enter(&mut self) {
+        let total_playlists = self.playlists.len();
+        if self.library_selected < total_playlists {
+            let uuid = self.playlists[self.library_selected].uuid.clone();
+            self.load_playlist_tracks_bg(uuid);
+        } else {
+            let mix_idx = self.library_selected - total_playlists;
+            if let Some(mix) = self.mixes.get(mix_idx) {
+                let mix_id = mix.id.clone();
+                self.load_mix_tracks_bg(mix_id);
+            }
+        }
+    }
+
     pub fn set_quality(&mut self, q: Quality) {
         self.tidal.quality = q;
         self.status_msg = format!("Calidad: {}", q.label());
@@ -355,18 +420,20 @@ impl App {
 
     pub fn next_tab(&mut self) {
         self.active_tab = match self.active_tab {
-            Tab::Search => Tab::Queue,
-            Tab::Queue  => Tab::Now,
-            Tab::Now    => Tab::Search,
+            Tab::Search  => Tab::Queue,
+            Tab::Queue   => Tab::Now,
+            Tab::Now     => Tab::Library,
+            Tab::Library => Tab::Search,
         };
         self.selected = 0;
     }
 
     pub fn current_list_len(&self) -> usize {
         match self.active_tab {
-            Tab::Search => self.search_results.len(),
-            Tab::Queue  => self.queue.len(),
-            Tab::Now    => 0,
+            Tab::Search  => self.search_results.len(),
+            Tab::Queue   => self.queue.len(),
+            Tab::Now     => 0,
+            Tab::Library => self.playlists.len() + self.mixes.len(),
         }
     }
 
