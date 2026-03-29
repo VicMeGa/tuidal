@@ -4,6 +4,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use image::DynamicImage;
 //use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::picker::Picker;
 //
 // use ratatui_image::ResizeEncodeRender;
 
@@ -22,7 +23,8 @@ pub enum Tab {
 
 pub enum AppEvent {
     SearchDone(Result<Vec<Track>, String>),
-    StreamReady { track: Track, info: StreamInfo, queue_index: usize },
+    // en el enum AppEvent:
+    StreamReady { track: Track, info: StreamInfo, queue_index: usize, generation: u64 },
     StreamError(String),
     AuthStarted { url: String, code: String, device_code: String },
     AuthDone,
@@ -63,8 +65,11 @@ pub struct App {
     //pub cover_proto:      Option<Box<dyn StatefulProtocol>>,
     //pub cover_proto: Option<StatefulProtocol>,
     pub cover_proto: Option<StatefulProtocol>,
+    pub picker: Option<Picker>,
     pub current_track_id: Option<u64>,
     pub last_img_area: Option<(u16, u16)>,
+    //pub picker: Option<ratatui_image::picker::Picker>,
+    pub stream_generation: u64,  // incrementa con cada stream solicitado
 }
 
 impl App {
@@ -93,6 +98,9 @@ impl App {
             cover_proto:      None,
             current_track_id: None,
             last_img_area: None,
+            picker: None,
+            stream_generation: 0,
+            
         }
     }
 
@@ -117,7 +125,12 @@ impl App {
                 self.status_msg = format!("✗ Error búsqueda: {e}");
                 self.loading    = false;
             }
-            AppEvent::StreamReady { track, info, queue_index } => {
+            AppEvent::StreamReady { track, info, queue_index, generation } => {
+                // ← primero el guard, ANTES de modificar nada
+                if generation != self.stream_generation {
+                    return;
+                }
+                // ahora sí actualizar estado
                 self.queue_index      = Some(queue_index);
                 self.current_track_id = Some(track.id);
                 let ti = TrackInfo {
@@ -247,6 +260,9 @@ impl App {
     }
 
     fn stream_track_bg(&mut self, track: Track, queue_index: usize) {
+        self.auto_advance = false;
+        self.stream_generation += 1;
+        let generation = self.stream_generation;
         self.loading    = true;
         self.status_msg = format!("⟳ Obteniendo stream: {}...", track.title);
         self.player.stop();
@@ -254,6 +270,7 @@ impl App {
         self.cover_info  = None;
         self.cover_proto = None;
 
+        // Capturar ANTES del spawn — el closure move necesita owned values
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -261,8 +278,12 @@ impl App {
         tokio::spawn(async move {
             let client = TidalClient::with_path_and_quality(script, quality);
             match client.get_stream_info(track.id).await {
-                Ok(info) => { let _ = tx.send(AppEvent::StreamReady { track, info, queue_index }); }
-                Err(e)   => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+                Ok(info) => {
+                    let _ = tx.send(AppEvent::StreamReady { track, info, queue_index, generation });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::StreamError(e.to_string()));
+                }
             }
         });
     }

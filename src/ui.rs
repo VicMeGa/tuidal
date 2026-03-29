@@ -170,9 +170,13 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    let img_cols = area.height.saturating_sub(2); // aprox cuadrado en celdas
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([
+            Constraint::Length(img_cols),   // cuadrado
+            Constraint::Min(0),             // resto para info
+        ])
         .split(area);
 
     let img_block = Block::default()
@@ -185,12 +189,26 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Recrear proto si cambió el área o la imagen
     let area_size = (img_inner.width, img_inner.height);
+     // Recrear el proto si cambió el área O si no existe
+    // (el picker ya fue creado antes de raw mode, así que es válido)
     if app.cover_proto.is_none() || app.last_img_area != Some(area_size) {
         app.last_img_area = Some(area_size);
-        if let Some(ref img) = app.cover_image {
-            let picker = Picker::from_query_stdio()
-                .unwrap_or_else(|_| Picker::from_fontsize((10, 20)));
-            app.cover_proto = Some(picker.new_resize_protocol(img.clone()));
+        app.cover_proto = None; // descartar el anterior
+
+        if let (Some(picker), Some(img)) = (&app.picker, &app.cover_image) {
+            // Escalar la imagen al tamaño del área ANTES de crear el protocol
+            // Esto evita que ratatui-image tenga que adivinar el tamaño
+            let (cols, rows) = (img_inner.width as u32, img_inner.height as u32);
+            let font_size    = picker.font_size(); // (ancho_px, alto_px) por celda
+            let target_w     = cols * font_size.0 as u32;
+            let target_h     = rows * font_size.1 as u32;
+
+            let scaled = img.resize(
+                target_w,
+                target_h,
+                image::imageops::FilterType::Lanczos3,
+            );
+            app.cover_proto = Some(picker.new_resize_protocol(scaled));
         }
     }
 

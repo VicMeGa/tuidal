@@ -17,6 +17,8 @@ use tokio::time::interval;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Debe hacerse ANTES de enable_raw_mode y EnterAlternateScreen
+    let picker = ratatui_image::picker::Picker::from_query_stdio().ok();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -24,6 +26,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
+    app.picker = picker;
 
     app.status_msg = "Cargando sesión...".to_string();
     if app.tidal.load_session().await.is_ok() {
