@@ -14,7 +14,7 @@ import json
 import sys
 import threading
 from pathlib import Path
-
+from tidalapi.user import ItemOrder, AlbumOrder, OrderDirection
 import tidalapi
 
 SESSION_FILE = Path.home() / ".config" / "tidal-tui" / "tidalapi_session.json"
@@ -238,6 +238,66 @@ def cmd_mix_tracks(mix_id: str):
     except Exception as e:
         err(str(e))
 
+# ─── Nuevos modelos de álbum para colección ──────────────────────────────────
+
+def _album_dict(a) -> dict:
+    artists = []
+    if hasattr(a, 'artists') and a.artists:
+        artists = [{"id": art.id, "name": art.name} for art in a.artists]
+    elif hasattr(a, 'artist') and a.artist:
+        artists = [{"id": a.artist.id, "name": a.artist.name}]
+    return {
+        "id":             a.id,
+        "title":          a.name,
+        "numberOfTracks": getattr(a, 'num_tracks', 0) or 0,
+        "duration":       getattr(a, 'duration', 0) or 0,
+        "artists":        artists,
+        "coverUrl":       a.image(320) if hasattr(a, 'image') else None,
+    }
+
+def cmd_favorite_tracks():
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        favorites = tidalapi.Favorites(session, session.user.id)
+        tracks    = favorites.tracks(
+            limit=500,
+            order=ItemOrder.Date,
+            order_direction=OrderDirection.Descending,
+        )
+        out([_track_dict(t) for t in tracks])
+    except Exception as e:
+        err(str(e))
+
+def cmd_favorite_albums():
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        favorites = tidalapi.Favorites(session, session.user.id)
+        albums    = favorites.albums(
+            limit=400,
+            order=AlbumOrder.DateAdded,
+            order_direction=OrderDirection.Descending,
+        )
+        out([_album_dict(a) for a in albums])
+    except Exception as e:
+        err(str(e))
+
+def cmd_album_tracks(album_id: int):
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        album  = session.album(album_id)
+        tracks = album.tracks()
+        out([_track_dict(t) for t in tracks])
+    except Exception as e:
+        err(str(e))
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -271,6 +331,12 @@ if __name__ == "__main__":
             cmd_mixes()
         case ["mix_tracks", mix_id]:
             cmd_mix_tracks(mix_id)
+        case ["fav_tracks"]:
+            cmd_favorite_tracks()
+        case ["fav_albums"]:
+            cmd_favorite_albums()
+        case ["album_tracks", album_id]:
+            cmd_album_tracks(int(album_id))
         case _:
             err(f"Comando desconocido: {args}")
             sys.exit(1)

@@ -1,9 +1,14 @@
+use std::io::Write;
+use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+// Ruta del socket IPC de mpv — única por proceso
+const SOCKET_PATH: &str = "/tmp/tuidal-mpv.sock";
+
 pub struct Player {
-    process:     Option<Child>,
-    pub state:   PlayerState,
+    process:    Option<Child>,
+    pub state:  PlayerState,
     pub current: Option<TrackInfo>,
     pub volume:  u8,
     pub elapsed: Duration,
@@ -46,11 +51,16 @@ impl Player {
         self.elapsed   = Duration::ZERO;
         self.last_tick = Some(Instant::now());
 
+        // Eliminar socket anterior si quedó huérfano
+        let _ = std::fs::remove_file(SOCKET_PATH);
+
         let child = Command::new("mpv")
             .args([
                 "--no-video",
                 "--really-quiet",
+                &format!("--input-ipc-server={SOCKET_PATH}"),  // ← IPC socket
                 &format!("--volume={}", self.volume),
+                "--audio-device=alsa/default",
                 url,
             ])
             .stdin(Stdio::null())
@@ -64,30 +74,31 @@ impl Player {
                 self.state   = PlayerState::Playing;
             }
             Err(_) => {
-                self.try_fallback(url);
+                // fallback: ffplay (no tiene IPC pero al menos reproduce)
+                let child2 = Command::new("ffplay")
+                    .args(["-nodisp", "-autoexit", "-loglevel", "quiet", url])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                if let Ok(c) = child2 {
+                    self.process = Some(c);
+                    self.state   = PlayerState::Playing;
+                }
             }
         }
     }
 
-    fn try_fallback(&mut self, url: &str) {
-        let child = Command::new("ffplay")
-            .args(["-nodisp", "-autoexit", "-loglevel", "quiet", url])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-
-        if let Ok(c) = child {
-            self.process = Some(c);
-            self.state   = PlayerState::Playing;
-        }
-    }
-
     pub fn stop(&mut self) {
+        // Pedir a mpv que salga limpiamente antes de kill
+        self.ipc_cmd(r#"{"command":["quit"]}"#);
+        std::thread::sleep(Duration::from_millis(50));
+
         if let Some(mut child) = self.process.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        let _ = std::fs::remove_file(SOCKET_PATH);
         self.state     = PlayerState::Stopped;
         self.elapsed   = Duration::ZERO;
         self.last_tick = None;
@@ -96,18 +107,12 @@ impl Player {
     pub fn toggle_pause(&mut self) {
         match self.state {
             PlayerState::Playing => {
-                if let Some(ref mut child) = self.process {
-                    #[cfg(unix)]
-                    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGSTOP); }
-                }
+                self.ipc_cmd(r#"{"command":["set_property","pause",true]}"#);
                 self.state     = PlayerState::Paused;
                 self.last_tick = None;
             }
             PlayerState::Paused => {
-                if let Some(ref mut child) = self.process {
-                    #[cfg(unix)]
-                    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGCONT); }
-                }
+                self.ipc_cmd(r#"{"command":["set_property","pause",false]}"#);
                 self.state     = PlayerState::Playing;
                 self.last_tick = Some(Instant::now());
             }
@@ -117,22 +122,23 @@ impl Player {
 
     pub fn volume_up(&mut self) {
         self.volume = (self.volume + 5).min(100);
-        self.set_mpv_volume();
+        self.ipc_cmd(&format!(
+            r#"{{"command":["set_property","volume",{}]}}"#,
+            self.volume
+        ));
     }
 
     pub fn volume_down(&mut self) {
         self.volume = self.volume.saturating_sub(5);
-        self.set_mpv_volume();
-    }
-
-    /// Envía el volumen actualizado a mpv via stdin no funciona sin IPC,
-    /// pero al menos actualiza el valor para la próxima canción.
-    fn set_mpv_volume(&self) {
-        // Sin IPC socket el volumen solo aplica al siguiente play().
-        // Para control en tiempo real habría que agregar --input-ipc-server.
+        self.ipc_cmd(&format!(
+            r#"{{"command":["set_property","volume",{}]}}"#,
+            self.volume
+        ));
     }
 
     pub fn seek_forward(&mut self) {
+        // Seek real en mpv + actualizar contador visual
+        self.ipc_cmd(r#"{"command":["seek",10,"relative"]}"#);
         if let Some(info) = &self.current {
             let max = Duration::from_secs(info.duration);
             self.elapsed = (self.elapsed + Duration::from_secs(10)).min(max);
@@ -140,22 +146,33 @@ impl Player {
     }
 
     pub fn seek_backward(&mut self) {
+        self.ipc_cmd(r#"{"command":["seek",-10,"relative"]}"#);
         self.elapsed = self.elapsed.saturating_sub(Duration::from_secs(10));
+    }
+
+    /// Envía un comando JSON al socket IPC de mpv (fire-and-forget)
+    fn ipc_cmd(&self, json: &str) {
+        if let Ok(mut stream) = UnixStream::connect(SOCKET_PATH) {
+            let msg = format!("{json}\n");
+            let _ = stream.write_all(msg.as_bytes());
+        }
+        // Si falla (socket no listo todavía) simplemente ignoramos
     }
 
     pub fn tick(&mut self) {
         if self.state == PlayerState::Playing {
             if let Some(last) = self.last_tick {
-                self.elapsed  += last.elapsed();
+                self.elapsed += last.elapsed();
                 self.last_tick = Some(Instant::now());
             }
 
-            // Verificar si mpv terminó
+            // Verificar si el proceso terminó
             if let Some(ref mut child) = self.process {
                 if let Ok(Some(_)) = child.try_wait() {
                     self.process   = None;
                     self.state     = PlayerState::Stopped;
                     self.last_tick = None;
+                    let _ = std::fs::remove_file(SOCKET_PATH);
                 }
             }
         }

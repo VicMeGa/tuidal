@@ -126,19 +126,37 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('i') => {
             if app.authenticated { app.load_library_bg(); }
         }
+        KeyCode::Char('F') => {
+            if app.authenticated { app.load_fav_tracks_bg(); }
+        }
+        KeyCode::Char('A') => {
+            if app.authenticated { app.load_fav_albums_bg(); }
+        }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.active_tab == Tab::Library {
-                let max = app.playlists.len() + app.mixes.len();
-                if max > 0 { app.library_selected = (app.library_selected + 1) % max; }
+                if app.collection_view == app::CollectionView::Albums {
+                    let max = app.fav_albums.len();
+                    if max > 0 { app.fav_album_selected = (app.fav_album_selected + 1) % max; }
+                } else {
+                    let max = app.playlists.len() + app.mixes.len();
+                    if max > 0 { app.library_selected = (app.library_selected + 1) % max; }
+                }
             } else {
                 app.next_track();
             }
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.active_tab == Tab::Library {
-                let max = app.playlists.len() + app.mixes.len();
-                if max > 0 {
-                    app.library_selected = if app.library_selected == 0 { max - 1 } else { app.library_selected - 1 };
+                if app.collection_view == app::CollectionView::Albums {
+                    let max = app.fav_albums.len();
+                    if max > 0 {
+                        app.fav_album_selected = if app.fav_album_selected == 0 { max - 1 } else { app.fav_album_selected - 1 };
+                    }
+                } else {
+                    let max = app.playlists.len() + app.mixes.len();
+                    if max > 0 {
+                        app.library_selected = if app.library_selected == 0 { max - 1 } else { app.library_selected - 1 };
+                    }
                 }
             } else {
                 app.prev_track();

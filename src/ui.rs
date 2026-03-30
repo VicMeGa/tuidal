@@ -1,4 +1,5 @@
-use crate::app::{App, InputMode, Tab};
+//use crate::app::{App, InputMode, Tab};
+use crate::app::{App, InputMode, Tab, CollectionView};
 use crate::player::PlayerState;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -10,7 +11,8 @@ use ratatui::{
     },
     Frame,
 };
-use ratatui_image::{picker::Picker, StatefulImage, Resize};
+//use ratatui_image::{picker::Picker, StatefulImage, Resize};
+use ratatui_image::{StatefulImage, Resize};
 
 const BG:      Color = Color::Rgb(10, 10, 14);
 const BG2:     Color = Color::Rgb(18, 18, 26);
@@ -442,6 +444,10 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
             hint_key("Tab", "vista"),
             hint_key("1/2/3", "calidad"),
             hint_key("q", "salir"),
+            hint_key("i", "biblioteca"),
+            hint_key("F", "fav tracks"),
+            hint_key("A", "fav álbumes"),
+            hint_key("q", "salir"),
         ])),
         inner[2],
     );
@@ -500,6 +506,12 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
+    // Si estamos en vista de álbumes favoritos
+    //if app.collection_view == app::CollectionView::Albums {
+    if app.collection_view == CollectionView::Albums {
+        draw_fav_albums(f, app, area);
+        return;
+    }
     let total = app.playlists.len() + app.mixes.len();
     if total == 0 {
         f.render_widget(
@@ -581,6 +593,72 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(DIM))
             .title(Span::styled(
                 format!(" Biblioteca ({} playlists, {} mixes) ", app.playlists.len(), app.mixes.len()),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )))
+        .row_highlight_style(Style::default().bg(BG3)),
+        area,
+        &mut state,
+    );
+}
+
+fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
+    if app.fav_albums.is_empty() {
+        f.render_widget(
+            Paragraph::new(if app.loading { "  ⟳ Cargando..." } else { "  Sin álbumes favoritos" })
+                .style(Style::default().fg(MUTED))
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(DIM))
+                    .title(Span::styled(" Álbumes favoritos ", Style::default().fg(MUTED)))),
+            area,
+        );
+        return;
+    }
+
+    let rows: Vec<Row> = app.fav_albums.iter().enumerate().map(|(i, a)| {
+        let is_sel = i == app.fav_album_selected;
+        Row::new(vec![
+            Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
+            Cell::from(Span::styled(
+                truncate(&a.title, 40),
+                Style::default()
+                    .fg(if is_sel { ACCENT } else { TEXT })
+                    .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+            )),
+            Cell::from(Span::styled(truncate(&a.artist_names(), 28), Style::default().fg(MUTED))),
+            Cell::from(Span::styled(
+                format!("{} tracks", a.number_of_tracks),
+                Style::default().fg(DIM),
+            )),
+        ])
+        .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
+    }).collect();
+
+    let header = Row::new(vec![
+        Cell::from(""),
+        Cell::from(Span::styled("Álbum",   Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Artista", Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("Tracks",  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+    ]).style(Style::default().bg(BG2));
+
+    let mut state = ratatui::widgets::TableState::default();
+    state.select(Some(app.fav_album_selected));
+
+    f.render_stateful_widget(
+        Table::new(rows, [
+            Constraint::Length(3),
+            Constraint::Min(30),
+            Constraint::Length(28),
+            Constraint::Length(10),
+        ])
+        .header(header)
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(DIM))
+            .title(Span::styled(
+                format!(" ◆ Álbumes favoritos ({}) — Enter para cargar ", app.fav_albums.len()),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             )))
         .row_highlight_style(Style::default().bg(BG3)),

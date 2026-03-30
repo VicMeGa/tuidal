@@ -1,5 +1,5 @@
 use crate::player::{Player, TrackInfo};
-use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo, Playlist, Mix};
+use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo, Playlist, Mix, FavAlbum};
 use tokio::sync::mpsc::UnboundedSender;
 use image::DynamicImage;
 use ratatui_image::protocol::StatefulProtocol;
@@ -25,6 +25,12 @@ pub enum LibraryMode {
     Tracks,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum CollectionView {
+    Tracks,
+    Albums,
+}
+
 pub enum AppEvent {
     SearchDone(Result<Vec<Track>, String>),
     StreamReady { track: Track, info: StreamInfo, queue_index: usize, generation: u64 },
@@ -37,6 +43,8 @@ pub enum AppEvent {
     CoverError,
     LibraryLoaded { playlists: Vec<Playlist>, mixes: Vec<Mix> },
     PlaylistTracksLoaded(Vec<Track>),
+    FavTracksLoaded(Vec<Track>),
+    FavAlbumsLoaded(Vec<FavAlbum>),
 }
 
 pub struct App {
@@ -76,6 +84,9 @@ pub struct App {
     pub mixes:            Vec<Mix>,
     pub library_selected: usize,
     pub library_mode:     LibraryMode,
+    pub fav_albums:          Vec<FavAlbum>,
+    pub fav_album_selected:  usize,
+    pub collection_view:     CollectionView,
 }
 
 impl App {
@@ -110,6 +121,9 @@ impl App {
             mixes:            Vec::new(),
             library_selected: 0,
             library_mode:     LibraryMode::List,
+            fav_albums:         Vec::new(),
+            fav_album_selected: 0,
+            collection_view:    CollectionView::Tracks,
         }
     }
 
@@ -210,6 +224,22 @@ impl App {
                 self.active_tab  = Tab::Queue;
                 self.loading     = false;
                 self.status_msg  = format!("✓ {} tracks cargados", self.queue.len());
+            }
+            AppEvent::FavTracksLoaded(tracks) => {
+                self.queue       = tracks;
+                self.queue_index = None;
+                self.selected    = 0;
+                self.active_tab  = Tab::Queue;
+                self.loading     = false;
+                self.status_msg  = format!("✓ {} canciones favoritas en cola", self.queue.len());
+            }
+            AppEvent::FavAlbumsLoaded(albums) => {
+                self.fav_albums         = albums;
+                self.fav_album_selected = 0;
+                self.collection_view    = CollectionView::Albums;
+                self.active_tab         = Tab::Library;
+                self.loading            = false;
+                self.status_msg         = format!("✓ {} álbumes en colección", self.fav_albums.len());
             }
         }
     }
@@ -400,6 +430,16 @@ impl App {
     }
 
     pub fn library_select_enter(&mut self) {
+        // Si estamos en vista de álbumes favoritos
+        if self.collection_view == CollectionView::Albums {
+            if let Some(album) = self.fav_albums.get(self.fav_album_selected) {
+                let id    = album.id;
+                let title = album.title.clone();
+                self.load_album_tracks_bg(id, title);
+            }
+            return;
+        }
+        // Vista normal: playlists y mixes
         let total_playlists = self.playlists.len();
         if self.library_selected < total_playlists {
             let uuid = self.playlists[self.library_selected].uuid.clone();
@@ -423,7 +463,10 @@ impl App {
             Tab::Search  => Tab::Queue,
             Tab::Queue   => Tab::Now,
             Tab::Now     => Tab::Library,
-            Tab::Library => Tab::Search,
+            Tab::Library => {
+                self.collection_view = CollectionView::Tracks; // resetear al salir
+                Tab::Search
+            }
         };
         self.selected = 0;
     }
@@ -465,5 +508,51 @@ impl App {
             }
         }
         false
+    }
+    pub fn load_fav_tracks_bg(&mut self) {
+        if !self.authenticated { return; }
+        self.loading    = true;
+        self.status_msg = "⟳ Cargando canciones favoritas...".to_string();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            match client.get_favorite_tracks().await {
+                Ok(t)  => { let _ = tx.send(AppEvent::FavTracksLoaded(t)); }
+                Err(e) => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
+    }
+
+    pub fn load_fav_albums_bg(&mut self) {
+        if !self.authenticated { return; }
+        self.loading    = true;
+        self.status_msg = "⟳ Cargando álbumes favoritos...".to_string();
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            match client.get_favorite_albums().await {
+                Ok(a)  => { let _ = tx.send(AppEvent::FavAlbumsLoaded(a)); }
+                Err(e) => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
+    }
+
+    pub fn load_album_tracks_bg(&mut self, album_id: u64, album_title: String) {
+        self.loading    = true;
+        self.status_msg = format!("⟳ Cargando {}...", album_title);
+        let tx      = self.tx();
+        let script  = self.tidal.script_path.clone();
+        let quality = self.tidal.quality;
+        tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality);
+            match client.get_album_tracks(album_id).await {
+                Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
+                Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
+            }
+        });
     }
 }

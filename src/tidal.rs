@@ -76,6 +76,25 @@ impl Track {
     }
 }
 
+// Modelo para álbumes de la colección
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavAlbum {
+    pub id:               u64,
+    pub title:            String,
+    pub number_of_tracks: u32,
+    pub duration:         u64,
+    pub artists:          Vec<Artist>,
+    pub cover_url:        Option<String>,
+}
+
+impl FavAlbum {
+    pub fn artist_names(&self) -> String {
+        self.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
     pub url:         String,
@@ -201,6 +220,27 @@ impl TidalClient {
             return Err(anyhow!("tidal.py no produjo output"));
         }
         Ok(stdout)
+    }
+
+   pub async fn get_favorite_tracks(&self) -> Result<Vec<Track>> {
+        let stdout = self.run(&["fav_tracks"])?;
+        let tracks: Vec<Track> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(tracks)
+    }
+
+    pub async fn get_favorite_albums(&self) -> Result<Vec<FavAlbum>> {
+        let stdout = self.run(&["fav_albums"])?;
+        let albums: Vec<FavAlbum> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(albums)
+    }
+
+    pub async fn get_album_tracks(&self, album_id: u64) -> Result<Vec<Track>> {
+        let stdout = self.run(&["album_tracks", &album_id.to_string()])?;
+        let tracks: Vec<Track> = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(tracks)
     }
 
     // ── Auth ──────────────────────────────────────────────────────────────────
