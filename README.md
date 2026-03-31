@@ -93,11 +93,18 @@ python3 -m venv ~/my_python
 ~/my_python/bin/pip install tidalapi
 ```
 
-If using a virtual environment, set the Python path in `src/tidal.rs`:
+### Python Executable Path (`TUIDAL_PYTHON_PATH`)
 
-```rust
-Command::new("/home/youruser/my_python/bin/python3")
+By default, tuidal uses `python3` as the executable. You can specify a custom Python interpreter **without modifying the code** by setting the environment variable `TUIDAL_PYTHON_PATH` before running tuidal.
+
+**Example:**
+
+```bash
+export TUIDAL_PYTHON_PATH="/home/youruser/my_python/bin/python3"
+cargo run # or ./target/release/tuidal
 ```
+
+If not set, tuidal defaults to running `python3` from your system PATH. This makes tuidal portable across environments, virtualenvs, and OS distributions.
 
 ---
 

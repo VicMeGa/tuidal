@@ -181,6 +181,7 @@ struct CoverResp {
 pub struct TidalClient {
     pub quality:     Quality,
     pub script_path: String,
+    pub python_path: String,
 }
 
 impl TidalClient {
@@ -194,15 +195,17 @@ impl TidalClient {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "tidal.py".to_string());
 
-        Self { quality: Quality::Lossless, script_path }
+        let python_path = std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
+
+        Self { quality: Quality::Lossless, script_path, python_path }
     }
 
-    pub fn with_path_and_quality(script_path: String, quality: Quality) -> Self {
-        Self { quality, script_path }
+    pub fn with_path_and_quality(script_path: String, quality: Quality, python_path: String) -> Self {
+        Self { quality, script_path, python_path }
     }
 
     fn run(&self, args: &[&str]) -> Result<String> {
-        let output = Command::new("/home/victor/mi_python/bin/python3")
+        let output = Command::new(&self.python_path)
             .arg(&self.script_path)
             .args(args)
             .output()
@@ -255,8 +258,9 @@ impl TidalClient {
 
     pub async fn start_device_auth(&self) -> Result<(String, String, String)> {
         let script_path = self.script_path.clone();
+        let python_path = self.python_path.clone();
         let stdout = tokio::task::spawn_blocking(move || {
-            Command::new("/home/victor/mi_python/bin/python3")
+            Command::new(&python_path)
                 .arg(&script_path)
                 .args(["auth", "start"])
                 .output()

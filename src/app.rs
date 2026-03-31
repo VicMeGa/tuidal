@@ -256,8 +256,9 @@ impl App {
         let query   = self.search_input.clone();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             let result = client.search(&query, 20).await.map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::SearchDone(result));
         });
@@ -319,8 +320,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_stream_info(track.id).await {
                 Ok(info) => { let _ = tx.send(AppEvent::StreamReady { track, info, queue_index, generation }); }
                 Err(e)   => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
@@ -332,8 +334,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             let cover_info = match client.get_cover(track_id).await {
                 Ok(c)  => c,
                 Err(_) => { let _ = tx.send(AppEvent::CoverError); return; }
@@ -358,8 +361,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.start_device_auth().await {
                 Ok((device_code, user_code, url)) => {
                     let _ = tx.send(AppEvent::AuthStarted { url, code: user_code, device_code });
@@ -374,8 +378,9 @@ impl App {
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
         let code    = self.device_code.clone().unwrap_or_default();
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.poll_device_token(&code).await {
                 Ok(true)  => { let _ = tx.send(AppEvent::AuthDone); }
                 Ok(false) => {}
@@ -391,8 +396,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client    = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client    = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             let playlists = client.get_user_playlists().await.unwrap_or_default();
             let mixes     = client.get_user_mixes().await.unwrap_or_default();
             let _ = tx.send(AppEvent::LibraryLoaded { playlists, mixes });
@@ -405,8 +411,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_playlist_tracks(&uuid).await {
                 Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
                 Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
@@ -420,8 +427,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_mix_tracks(&mix_id).await {
                 Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
                 Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
@@ -516,8 +524,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_favorite_tracks().await {
                 Ok(t)  => { let _ = tx.send(AppEvent::FavTracksLoaded(t)); }
                 Err(e) => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
@@ -532,8 +541,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_favorite_albums().await {
                 Ok(a)  => { let _ = tx.send(AppEvent::FavAlbumsLoaded(a)); }
                 Err(e) => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
@@ -547,8 +557,9 @@ impl App {
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
-        tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality);
+        let python_path = self.tidal.python_path.clone();
+tokio::spawn(async move {
+            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
             match client.get_album_tracks(album_id).await {
                 Ok(tracks) => { let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks)); }
                 Err(e)     => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
