@@ -430,7 +430,7 @@ impl App {
     }
 
     pub fn library_select_enter(&mut self) {
-        // Si estamos en vista de álbumes favoritos
+        // Si esta   en vista de álbumes favoritos
         if self.collection_view == CollectionView::Albums {
             if let Some(album) = self.fav_albums.get(self.fav_album_selected) {
                 let id    = album.id;

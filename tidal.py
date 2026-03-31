@@ -238,7 +238,7 @@ def cmd_mix_tracks(mix_id: str):
     except Exception as e:
         err(str(e))
 
-# ─── Nuevos modelos de álbum para colección ──────────────────────────────────
+# ─── modelos álbum para colección ──────────────────────────────────
 
 def _album_dict(a) -> dict:
     artists = []
