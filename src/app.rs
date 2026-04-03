@@ -179,7 +179,16 @@ impl App {
                 self.device_code = Some(device_code);
                 self.user_code   = Some(code.clone());
                 self.auth_url    = Some(url.clone());
-                self.status_msg  = format!("Abre: {url}  Código: {code}");
+                let url_to_open = if url.starts_with("http://") || url.starts_with("https://") {
+                    url.clone()
+                } else {
+                    format!("https://{}", url)
+                };
+                if let Err(e) = open::that(&url_to_open) {
+                    self.status_msg = format!("No se pudo abrir browser ({}): {}", e, url);
+                } else {
+                    self.status_msg = format!("Browser abierto. Código: {code}");
+                }
                 self.loading     = false;
             }
             AppEvent::AuthDone => {
