@@ -2,7 +2,8 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::process::Command;
+use std::io::BufRead;
+use std::process::{Command, Stdio};
 
 // ─── Calidades ────────────────────────────────────────────────────────────────
 
@@ -260,12 +261,23 @@ impl TidalClient {
         let script_path = self.script_path.clone();
         let python_path = self.python_path.clone();
         let stdout = tokio::task::spawn_blocking(move || {
-            Command::new(&python_path)
+            let mut child = Command::new(&python_path)
                 .arg(&script_path)
                 .args(["auth", "start"])
-                .output()
-                .map_err(|e| anyhow!("Error lanzando python3: {e}"))
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|e| anyhow!("Error lanzando python3: {e}"))?;
+            // Leer solo la primera línea (JSON con URL), luego dejar el proceso
+            // corriendo en background — el thread de Python sigue esperando la
+            // autorización y escribe el resultado en POLL_FILE.
+            let reader = std::io::BufReader::new(child.stdout.take().unwrap());
+            let first_line = reader.lines()
+                .next()
+                .ok_or_else(|| anyhow!("tidal.py no produjo output"))?
+                .map_err(|e| anyhow!("Error leyendo output: {e}"))?;
+            Ok::<String, anyhow::Error>(first_line)
         }).await??;
 
         let resp: AuthStartResp = serde_json::from_str(&stdout)
