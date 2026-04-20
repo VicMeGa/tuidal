@@ -1,3 +1,4 @@
+use crate::i18n::Lang;
 use crate::player::{Player, TrackInfo};
 use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo, Playlist, Mix, FavAlbum};
 use tokio::sync::mpsc::UnboundedSender;
@@ -17,12 +18,6 @@ pub enum Tab {
     Queue,
     Now,
     Library,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LibraryMode {
-    List,
-    Tracks,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +63,6 @@ pub struct App {
     pub device_code: Option<String>,
     pub user_code:   Option<String>,
     pub auth_url:    Option<String>,
-    pub poll_handle: Option<tokio::task::JoinHandle<()>>,
 
     pub event_tx: Option<UnboundedSender<AppEvent>>,
 
@@ -83,10 +77,11 @@ pub struct App {
     pub playlists:        Vec<Playlist>,
     pub mixes:            Vec<Mix>,
     pub library_selected: usize,
-    pub library_mode:     LibraryMode,
     pub fav_albums:          Vec<FavAlbum>,
     pub fav_album_selected:  usize,
     pub collection_view:     CollectionView,
+
+    pub lang: Lang,
 }
 
 impl App {
@@ -108,7 +103,6 @@ impl App {
             device_code:      None,
             user_code:        None,
             auth_url:         None,
-            poll_handle:      None,
             event_tx:         None,
             cover_info:       None,
             cover_image:      None,
@@ -120,11 +114,16 @@ impl App {
             playlists:        Vec::new(),
             mixes:            Vec::new(),
             library_selected: 0,
-            library_mode:     LibraryMode::List,
             fav_albums:         Vec::new(),
             fav_album_selected: 0,
             collection_view:    CollectionView::Tracks,
+            lang:               Lang::Es,
         }
+    }
+
+    pub fn cycle_lang(&mut self) {
+        self.lang = self.lang.cycle();
+        self.status_msg = self.lang.lang_changed();
     }
 
     fn tx(&self) -> UnboundedSender<AppEvent> {
@@ -135,9 +134,9 @@ impl App {
         match event {
             AppEvent::SearchDone(Ok(results)) => {
                 self.status_msg = if results.is_empty() {
-                    "Sin resultados".to_string()
+                    self.lang.strings().status_no_results.to_string()
                 } else {
-                    format!("{} resultados", results.len())
+                    self.lang.results_count(results.len())
                 };
                 self.search_results = results;
                 self.selected       = 0;
@@ -145,7 +144,7 @@ impl App {
                 self.loading        = false;
             }
             AppEvent::SearchDone(Err(e)) => {
-                self.status_msg = format!("✗ Error búsqueda: {e}");
+                self.status_msg = self.lang.search_error(&e);
                 self.loading    = false;
             }
             AppEvent::StreamReady { track, info, queue_index, generation } => {
@@ -172,7 +171,7 @@ impl App {
                 self.load_cover_bg(track.id);
             }
             AppEvent::StreamError(e) => {
-                self.status_msg = format!("✗ Error stream: {e}");
+                self.status_msg = self.lang.stream_error(&e);
                 self.loading    = false;
             }
             AppEvent::AuthStarted { url, code, device_code } => {
@@ -185,9 +184,9 @@ impl App {
                     format!("https://{}", url)
                 };
                 if let Err(e) = open::that(&url_to_open) {
-                    self.status_msg = format!("No se pudo abrir browser ({}): {}", e, url);
+                    self.status_msg = self.lang.browser_failed(&e.to_string(), &url);
                 } else {
-                    self.status_msg = format!("Browser abierto. Código: {code}");
+                    self.status_msg = self.lang.browser_opened(&code);
                 }
                 self.loading     = false;
             }
@@ -196,11 +195,11 @@ impl App {
                 self.device_code   = None;
                 self.user_code     = None;
                 self.auth_url      = None;
-                self.status_msg    = "✓ Autenticado con Tidal".to_string();
+                self.status_msg    = self.lang.strings().status_auth_done.to_string();
                 self.loading       = false;
             }
             AppEvent::AuthError(e) => {
-                self.status_msg = format!("✗ Error auth: {e}");
+                self.status_msg = self.lang.auth_error(&e);
                 self.loading    = false;
             }
             AppEvent::StatusMsg(msg) => {
@@ -221,10 +220,7 @@ impl App {
                 self.mixes      = mixes;
                 self.active_tab = Tab::Library;
                 self.loading    = false;
-                self.status_msg = format!(
-                    "✓ {} playlists, {} mixes",
-                    self.playlists.len(), self.mixes.len()
-                );
+                self.status_msg = self.lang.library_loaded(self.playlists.len(), self.mixes.len());
             }
             AppEvent::PlaylistTracksLoaded(tracks) => {
                 self.queue       = tracks;
@@ -232,7 +228,7 @@ impl App {
                 self.selected    = 0;
                 self.active_tab  = Tab::Queue;
                 self.loading     = false;
-                self.status_msg  = format!("✓ {} tracks cargados", self.queue.len());
+                self.status_msg  = self.lang.tracks_loaded(self.queue.len());
             }
             AppEvent::FavTracksLoaded(tracks) => {
                 self.queue       = tracks;
@@ -240,7 +236,7 @@ impl App {
                 self.selected    = 0;
                 self.active_tab  = Tab::Queue;
                 self.loading     = false;
-                self.status_msg  = format!("✓ {} canciones favoritas en cola", self.queue.len());
+                self.status_msg  = self.lang.fav_tracks_loaded(self.queue.len());
             }
             AppEvent::FavAlbumsLoaded(albums) => {
                 self.fav_albums         = albums;
@@ -248,19 +244,19 @@ impl App {
                 self.collection_view    = CollectionView::Albums;
                 self.active_tab         = Tab::Library;
                 self.loading            = false;
-                self.status_msg         = format!("✓ {} álbumes en colección", self.fav_albums.len());
+                self.status_msg         = self.lang.fav_albums_loaded(self.fav_albums.len());
             }
         }
     }
 
     pub fn do_search_bg(&mut self) {
         if !self.authenticated {
-            self.status_msg = "Primero inicia sesión con 'L'".to_string();
+            self.status_msg = self.lang.strings().status_login_required.to_string();
             return;
         }
         if self.search_input.is_empty() { return; }
         self.loading    = true;
-        self.status_msg = format!("Buscando \"{}\"...", self.search_input);
+        self.status_msg = self.lang.searching(&self.search_input.clone());
         let tx      = self.tx();
         let query   = self.search_input.clone();
         let script  = self.tidal.script_path.clone();
@@ -275,7 +271,7 @@ tokio::spawn(async move {
 
     pub fn play_selected_bg(&mut self) {
         if !self.authenticated {
-            self.status_msg = "Inicia sesión primero (L)".to_string();
+            self.status_msg = self.lang.strings().status_login_required_short.to_string();
             return;
         }
         let track = match self.active_tab {
@@ -321,7 +317,7 @@ tokio::spawn(async move {
         self.stream_generation += 1;
         let generation = self.stream_generation;
         self.loading     = true;
-        self.status_msg  = format!("⟳ Obteniendo stream: {}...", track.title);
+        self.status_msg  = self.lang.loading_stream(&track.title.clone());
         self.cover_image = None;
         self.cover_info  = None;
         self.cover_proto = None;
@@ -366,7 +362,7 @@ tokio::spawn(async move {
 
     pub fn start_login_bg(&mut self) {
         self.loading    = true;
-        self.status_msg = "Iniciando login...".to_string();
+        self.status_msg = self.lang.strings().status_starting_login.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -401,7 +397,7 @@ tokio::spawn(async move {
     pub fn load_library_bg(&mut self) {
         if !self.authenticated { return; }
         self.loading    = true;
-        self.status_msg = "⟳ Cargando biblioteca...".to_string();
+        self.status_msg = self.lang.strings().status_loading_lib.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -416,7 +412,7 @@ tokio::spawn(async move {
 
     pub fn load_playlist_tracks_bg(&mut self, uuid: String) {
         self.loading    = true;
-        self.status_msg = "⟳ Cargando playlist...".to_string();
+        self.status_msg = self.lang.strings().status_loading_playlist.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -432,7 +428,7 @@ tokio::spawn(async move {
 
     pub fn load_mix_tracks_bg(&mut self, mix_id: String) {
         self.loading    = true;
-        self.status_msg = "⟳ Cargando mix...".to_string();
+        self.status_msg = self.lang.strings().status_loading_mix.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -472,7 +468,7 @@ tokio::spawn(async move {
 
     pub fn set_quality(&mut self, q: Quality) {
         self.tidal.quality = q;
-        self.status_msg = format!("Calidad: {}", q.label());
+        self.status_msg = self.lang.quality_changed(q.label());
     }
 
     pub fn next_tab(&mut self) {
@@ -509,27 +505,10 @@ tokio::spawn(async move {
         }
     }
 
-    pub async fn poll_auth(&mut self) -> bool {
-        if let Some(code) = self.device_code.clone() {
-            match self.tidal.poll_device_token(&code).await {
-                Ok(true) => {
-                    self.authenticated = true;
-                    self.device_code   = None;
-                    self.user_code     = None;
-                    self.auth_url      = None;
-                    self.status_msg    = "✓ Autenticado con Tidal".to_string();
-                    return true;
-                }
-                Ok(false) => {}
-                Err(e) => { self.status_msg = format!("Error poll: {e}"); }
-            }
-        }
-        false
-    }
     pub fn load_fav_tracks_bg(&mut self) {
         if !self.authenticated { return; }
         self.loading    = true;
-        self.status_msg = "⟳ Cargando canciones favoritas...".to_string();
+        self.status_msg = self.lang.strings().status_loading_fav_tracks.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -546,7 +525,7 @@ tokio::spawn(async move {
     pub fn load_fav_albums_bg(&mut self) {
         if !self.authenticated { return; }
         self.loading    = true;
-        self.status_msg = "⟳ Cargando álbumes favoritos...".to_string();
+        self.status_msg = self.lang.strings().status_loading_fav_albums.to_string();
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
@@ -562,7 +541,7 @@ tokio::spawn(async move {
 
     pub fn load_album_tracks_bg(&mut self, album_id: u64, album_title: String) {
         self.loading    = true;
-        self.status_msg = format!("⟳ Cargando {}...", album_title);
+        self.status_msg = self.lang.loading_album(&album_title.clone());
         let tx      = self.tx();
         let script  = self.tidal.script_path.clone();
         let quality = self.tidal.quality;
