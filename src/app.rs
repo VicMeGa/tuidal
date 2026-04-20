@@ -1,9 +1,11 @@
 use crate::player::{Player, TrackInfo};
-use crate::tidal::{Quality, TidalClient, Track, StreamInfo, CoverInfo, Playlist, Mix, FavAlbum};
+use crate::tidal::{Quality, TidalClient, Track, Artist, Album, StreamInfo, CoverInfo, Playlist, Mix, FavAlbum};
+use serde::Deserialize as DeserializeAttr;
 use tokio::sync::mpsc::UnboundedSender;
 use image::DynamicImage;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::picker::Picker;
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
@@ -45,6 +47,58 @@ pub enum AppEvent {
     PlaylistTracksLoaded(Vec<Track>),
     FavTracksLoaded(Vec<Track>),
     FavAlbumsLoaded(Vec<FavAlbum>),
+    ApiCmd(ApiCommand),
+}
+
+pub enum ApiCommand {
+    PlayPause,
+    Next,
+    Prev,
+    VolumeUp,
+    VolumeDown,
+    VolumeSet(u8),
+    SeekForward,
+    SeekBackward,
+    PlayTrack(ApiTrack),
+    ToggleShuffle,
+    CycleRepeat,
+}
+
+#[derive(Debug, Clone, DeserializeAttr)]
+pub struct ApiTrack {
+    pub id:       u64,
+    pub title:    String,
+    pub artist:   String,
+    pub album:    String,
+    pub duration: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RepeatMode { Off, One, All }
+
+impl Default for RepeatMode {
+    fn default() -> Self { RepeatMode::All }
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct ApiStatus {
+    pub state:         String,
+    pub title:         Option<String>,
+    pub artist:        Option<String>,
+    pub album:         Option<String>,
+    pub duration:      Option<u64>,
+    pub elapsed:       u64,
+    pub volume:        u8,
+    pub progress:      f64,
+    pub bit_depth:     Option<u32>,
+    pub sample_rate:   Option<u32>,
+    pub codec:         Option<String>,
+    pub shuffle:       bool,
+    pub repeat:        RepeatMode,
+    pub authenticated: bool,
+    pub queue:         Vec<Track>,
+    pub queue_index:   Option<usize>,
 }
 
 pub struct App {
@@ -87,6 +141,9 @@ pub struct App {
     pub fav_albums:          Vec<FavAlbum>,
     pub fav_album_selected:  usize,
     pub collection_view:     CollectionView,
+
+    pub shuffle: bool,
+    pub repeat:  RepeatMode,
 }
 
 impl App {
@@ -124,6 +181,8 @@ impl App {
             fav_albums:         Vec::new(),
             fav_album_selected: 0,
             collection_view:    CollectionView::Tracks,
+            shuffle:            false,
+            repeat:             RepeatMode::All,
         }
     }
 
@@ -250,6 +309,49 @@ impl App {
                 self.loading            = false;
                 self.status_msg         = format!("✓ {} álbumes en colección", self.fav_albums.len());
             }
+            AppEvent::ApiCmd(cmd) => match cmd {
+                ApiCommand::PlayPause    => { self.player.toggle_pause(); }
+                ApiCommand::Next         => { self.play_next_bg(); }
+                ApiCommand::Prev         => { self.play_prev_bg(); }
+                ApiCommand::VolumeUp     => { self.player.volume_up(); }
+                ApiCommand::VolumeDown   => { self.player.volume_down(); }
+                ApiCommand::VolumeSet(v) => { self.player.set_volume(v); }
+                ApiCommand::SeekForward  => { self.player.seek_forward(); }
+                ApiCommand::SeekBackward => { self.player.seek_backward(); }
+                ApiCommand::ToggleShuffle => {
+                    self.shuffle = !self.shuffle;
+                    self.status_msg = if self.shuffle { "Shuffle: on".into() } else { "Shuffle: off".into() };
+                }
+                ApiCommand::CycleRepeat => {
+                    self.repeat = match self.repeat {
+                        RepeatMode::All => RepeatMode::One,
+                        RepeatMode::One => RepeatMode::Off,
+                        RepeatMode::Off => RepeatMode::All,
+                    };
+                    self.status_msg = format!("Repeat: {}", match self.repeat {
+                        RepeatMode::All => "all",
+                        RepeatMode::One => "one",
+                        RepeatMode::Off => "off",
+                    });
+                }
+                ApiCommand::PlayTrack(api_track) => {
+                    let track = Track {
+                        id:            api_track.id,
+                        title:         api_track.title.clone(),
+                        duration:      api_track.duration,
+                        track_number:  None,
+                        artists:       vec![Artist { id: 0, name: api_track.artist.clone() }],
+                        album:         Album { id: 0, title: api_track.album.clone() },
+                        audio_quality: None,
+                        explicit:      None,
+                    };
+                    if !self.queue.iter().any(|t| t.id == track.id) {
+                        self.queue.push(track.clone());
+                    }
+                    let qi = self.queue.iter().position(|t| t.id == track.id).unwrap_or(0);
+                    self.stream_track_bg(track, qi);
+                }
+            },
         }
     }
 
@@ -298,12 +400,37 @@ tokio::spawn(async move {
 
     pub fn play_next_bg(&mut self) {
         if self.queue.is_empty() { return; }
-        let next = match self.queue_index {
-            Some(i) if i + 1 < self.queue.len() => i + 1,
-            _ => 0,
+        let next = if self.repeat == RepeatMode::One {
+            self.queue_index.unwrap_or(0)
+        } else if self.shuffle {
+            self.random_queue_index()
+        } else {
+            match self.queue_index {
+                Some(i) if i + 1 < self.queue.len() => i + 1,
+                _ => match self.repeat {
+                    RepeatMode::Off => return,
+                    _ => 0,
+                }
+            }
         };
         let track = self.queue[next].clone();
         self.stream_track_bg(track, next);
+    }
+
+    fn random_queue_index(&self) -> usize {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as usize;
+        let seed = nanos ^ (self.player.elapsed.as_nanos() as usize);
+        if self.queue.len() <= 1 { return 0; }
+        let candidate = seed % self.queue.len();
+        if Some(candidate) == self.queue_index {
+            (candidate + 1) % self.queue.len()
+        } else {
+            candidate
+        }
     }
 
     pub fn play_prev_bg(&mut self) {
@@ -558,6 +685,43 @@ tokio::spawn(async move {
                 Err(e) => { let _ = tx.send(AppEvent::StreamError(e.to_string())); }
             }
         });
+    }
+
+    pub fn api_status_snapshot(&self) -> ApiStatus {
+        use crate::player::PlayerState;
+        let state = match self.player.state {
+            PlayerState::Playing => "playing",
+            PlayerState::Paused  => "paused",
+            PlayerState::Stopped => "stopped",
+        }.to_string();
+        let (title, artist, album, duration, bit_depth, sample_rate, codec) =
+            self.player.current.as_ref().map(|ti| (
+                Some(ti.title.clone()),
+                Some(ti.artist.clone()),
+                Some(ti.album.clone()),
+                Some(ti.duration),
+                Some(ti.bit_depth),
+                Some(ti.sample_rate),
+                Some(ti.codec.clone()),
+            )).unwrap_or_default();
+        ApiStatus {
+            state,
+            title,
+            artist,
+            album,
+            duration,
+            elapsed:       self.player.elapsed.as_secs(),
+            volume:        self.player.volume,
+            progress:      self.player.progress(),
+            bit_depth,
+            sample_rate,
+            codec,
+            shuffle:       self.shuffle,
+            repeat:        self.repeat.clone(),
+            authenticated: self.authenticated,
+            queue:         self.queue.clone(),
+            queue_index:   self.queue_index,
+        }
     }
 
     pub fn load_album_tracks_bg(&mut self, album_id: u64, album_title: String) {
