@@ -1,7 +1,7 @@
 /// tidal.rs — Llama a tidal.py como subproceso y parsea el JSON que devuelve.
 
 use anyhow::{anyhow, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::process::{Command, Stdio};
 
@@ -33,19 +33,22 @@ impl Quality {
 
 // ─── Modelos ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Artist {
     pub id:   u64,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Album {
     pub id:    u64,
     pub title: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Track {
     pub id:            u64,
     pub title:         String,
@@ -79,7 +82,7 @@ impl Track {
 
 // Modelo para álbumes de la colección
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavAlbum {
     pub id:               u64,
@@ -114,7 +117,7 @@ pub struct CoverInfo {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Playlist {
     pub uuid:             String,
@@ -129,7 +132,7 @@ pub struct Playlist {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mix {
     pub id:    String,
