@@ -1,3 +1,4 @@
+mod i18n;
 mod tidal;
 mod ui;
 mod player;
@@ -29,12 +30,12 @@ async fn main() -> Result<()> {
     let mut app = App::new();
     app.picker = picker;
 
-    app.status_msg = "Cargando sesión...".to_string();
+    app.status_msg = app.lang.strings().status_session_loading.to_string();
     if app.tidal.load_session().await.is_ok() {
-        app.status_msg = "✓ Sesión activa".to_string();
+        app.status_msg = app.lang.strings().status_session_active.to_string();
         app.authenticated = true;
     } else {
-        app.status_msg = "Presiona 'L' para iniciar sesión en Tidal".to_string();
+        app.status_msg = app.lang.strings().status_press_l.to_string();
     }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
@@ -194,6 +195,7 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('1') => app.set_quality(tidal::Quality::HiResLossless),
         KeyCode::Char('2') => app.set_quality(tidal::Quality::Lossless),
         KeyCode::Char('3') => app.set_quality(tidal::Quality::High),
+        KeyCode::Char('`') => app.cycle_lang(),
         _ => {}
     }
 }

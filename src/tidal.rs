@@ -102,7 +102,6 @@ impl FavAlbum {
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
     pub url:         String,
-    pub mime_type:   String,
     pub bit_depth:   u32,
     pub sample_rate: u32,
     pub codec:       String,
@@ -110,10 +109,7 @@ pub struct StreamInfo {
 
 #[derive(Debug, Clone)]
 pub struct CoverInfo {
-    pub url:    String,
-    pub title:  String,
-    pub artist: String,
-    pub album:  String,
+    pub url: String,
 }
 
 #[allow(dead_code)]
@@ -140,11 +136,6 @@ pub struct Mix {
     pub sub_title: Option<String>,
 }
 
-// Para deserializar tracks dentro de un mix (vienen envueltos en "item")
-#[derive(Debug, Deserialize)]
-struct MixItem {
-    item: Track,
-}
 // ─── Respuestas internas ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -167,17 +158,13 @@ struct StreamResp {
     codec:       Option<String>,
     bit_depth:   Option<u32>,
     sample_rate: Option<u32>,
-    mime_type:   Option<String>,
     error:       Option<String>,
 }
 
 #[derive(Deserialize)]
 struct CoverResp {
-    url:    Option<String>,
-    title:  Option<String>,
-    artist: Option<String>,
-    album:  Option<String>,
-    error:  Option<String>,
+    url:   Option<String>,
+    error: Option<String>,
 }
 
 // ─── Cliente ──────────────────────────────────────────────────────────────────
@@ -320,7 +307,6 @@ impl TidalClient {
             codec:       resp.codec.unwrap_or_else(|| "flac".into()),
             bit_depth:   resp.bit_depth.unwrap_or(16),
             sample_rate: resp.sample_rate.unwrap_or(44100),
-            mime_type:   resp.mime_type.unwrap_or_else(|| "audio/flac".into()),
         })
     }
 
@@ -331,10 +317,7 @@ impl TidalClient {
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
         if let Some(e) = resp.error { return Err(anyhow!("{e}")); }
         Ok(CoverInfo {
-            url:    resp.url.unwrap_or_default(),
-            title:  resp.title.unwrap_or_default(),
-            artist: resp.artist.unwrap_or_default(),
-            album:  resp.album.unwrap_or_default(),
+            url: resp.url.unwrap_or_default(),
         })
     }
     pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>> {
