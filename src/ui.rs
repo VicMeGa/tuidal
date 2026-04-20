@@ -55,7 +55,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(24),
             Constraint::Min(0),
-            Constraint::Length(22),
+            Constraint::Length(30),
         ])
         .split(area);
 
@@ -72,15 +72,16 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         cols[0],
     );
 
+    let s = app.lang.strings();
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            tab_span("Buscar", Tab::Search, &app.active_tab),
+            tab_span(s.tab_search,  Tab::Search,  &app.active_tab),
             Span::styled("  ", Style::default()),
-            tab_span("Cola", Tab::Queue, &app.active_tab),
+            tab_span(s.tab_queue,   Tab::Queue,   &app.active_tab),
             Span::styled("  ", Style::default()),
-            tab_span("Ahora", Tab::Now, &app.active_tab),
+            tab_span(s.tab_now,     Tab::Now,     &app.active_tab),
             Span::styled("  ", Style::default()),
-            tab_span("Biblioteca", Tab::Library, &app.active_tab),
+            tab_span(s.tab_library, Tab::Library, &app.active_tab),
         ]))
         .block(Block::default()
             .borders(Borders::BOTTOM)
@@ -96,6 +97,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
+            Span::styled(format!("[{}]  ", app.lang.label()), Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD)),
             auth_icon,
             Span::styled(app.tidal.quality.label(), Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
         ]))
@@ -142,7 +144,7 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("▎", Style::default().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK))
             } else { Span::raw("") },
             if app.search_input.is_empty() && !is_searching {
-                Span::styled("Presiona / para buscar...", Style::default().fg(DIM))
+                Span::styled(app.lang.strings().search_placeholder, Style::default().fg(DIM))
             } else { Span::raw("") },
         ]))
         .block(Block::default()
@@ -153,23 +155,24 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
         chunks[0],
     );
 
-    draw_track_list(f, app, chunks[1], &app.search_results.clone(), app.selected, "Resultados");
+    draw_track_list(f, app, chunks[1], &app.search_results.clone(), app.selected, app.lang.strings().search_results_title);
 }
 
 fn draw_queue_tab(f: &mut Frame, app: &App, area: Rect) {
-    draw_track_list(f, app, area, &app.queue.clone(), app.selected, "Cola de reproducción");
+    draw_track_list(f, app, area, &app.queue.clone(), app.selected, app.lang.strings().queue_title);
 }
 
 fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
+    let s = app.lang.strings();
     if app.player.current.is_none() {
         f.render_widget(
-            Paragraph::new("\n\n  Sin reproducción — presiona Enter en una canción")
+            Paragraph::new(format!("\n\n  {}", s.now_playing_empty))
                 .style(Style::default().fg(MUTED))
                 .block(Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(" ◈ Ahora reproduciendo ", Style::default().fg(MUTED)))),
+                    .title(Span::styled(format!(" {} ", s.now_playing_title), Style::default().fg(MUTED)))),
             area,
         );
         return;
@@ -222,7 +225,7 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_stateful_widget(widget, img_inner, proto);
     } else {
         f.render_widget(
-            Paragraph::new("\n\n  ⟳ Cargando\n  imagen...")
+            Paragraph::new(format!("\n\n  {}", app.lang.strings().loading_image))
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(MUTED)),
             img_inner,
@@ -234,7 +237,7 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(DIM))
-        .title(Span::styled(" ◈ Ahora reproduciendo ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(format!(" {} ", s.now_playing_title), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
         .style(Style::default().bg(BG2));
     let info_inner = info_block.inner(cols[1]);
     f.render_widget(info_block, cols[1]);
@@ -281,10 +284,11 @@ fn draw_track_list(
     selected: usize,
     title: &str,
 ) {
+    let s = app.lang.strings();
     if tracks.is_empty() {
-        let msg = if app.loading { "  ⟳ Cargando..." }
-            else if !app.authenticated { "  Presiona L para iniciar sesión en Tidal" }
-            else { "  Sin resultados — busca con /" };
+        let msg = if app.loading { s.loading }
+            else if !app.authenticated { s.not_authenticated }
+            else { s.no_results_hint };
         f.render_widget(
             Paragraph::new(msg)
                 .style(Style::default().fg(MUTED))
@@ -337,11 +341,11 @@ fn draw_track_list(
     }).collect();
 
     let header = Row::new(vec![
-        Cell::from(Span::styled("  #",      Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("  Título", Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Artista",  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Álbum",    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Dur.",     Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled("  #",           Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_title,     Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_artist,    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_album,     Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_duration,  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
     ]).style(Style::default().bg(BG2)).height(1);
 
     let mut state = ratatui::widgets::TableState::default();
@@ -410,7 +414,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
         } else {
             Line::from(vec![
                 Span::styled(format!(" {state_icon} "), Style::default().fg(MUTED)),
-                Span::styled("Sin reproducción", Style::default().fg(DIM)),
+                Span::styled(app.lang.strings().player_stopped, Style::default().fg(DIM)),
             ])
         }),
         inner[0],
@@ -434,20 +438,21 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
         inner[1],
     );
 
+    let s = app.lang.strings();
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            hint_key("Enter", "reproducir"),
-            hint_key("Space", "pausa"),
-            hint_key("n/p", "sig/ant"),
-            hint_key("←/→", "seek"),
-            hint_key("+/-", "volumen"),
-            hint_key("Tab", "vista"),
-            hint_key("1/2/3", "calidad"),
-            hint_key("q", "salir"),
-            hint_key("i", "biblioteca"),
-            hint_key("F", "fav tracks"),
-            hint_key("A", "fav álbumes"),
-            hint_key("q", "salir"),
+            hint_key("Enter", s.hint_play),
+            hint_key("Space", s.hint_pause),
+            hint_key("n/p",   s.hint_next_prev),
+            hint_key("←/→",   s.hint_seek),
+            hint_key("+/-",   s.hint_volume),
+            hint_key("Tab",   s.hint_view),
+            hint_key("1/2/3", s.hint_quality),
+            hint_key("q",     s.hint_quit),
+            hint_key("i",     s.hint_library),
+            hint_key("F",     s.hint_fav_tracks),
+            hint_key("A",     s.hint_fav_albums),
+            hint_key("`",     s.hint_lang),
         ])),
         inner[2],
     );
@@ -478,27 +483,28 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
 
     let user_code = app.user_code.as_deref().unwrap_or("...");
     let auth_url  = app.auth_url.as_deref().unwrap_or("...");
+    let s = app.lang.strings();
 
     f.render_widget(
         Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled("  Inicia sesión en Tidal", Style::default().fg(TEXT).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(s.login_title_text, Style::default().fg(TEXT).add_modifier(Modifier::BOLD))),
             Line::from(""),
-            Line::from(Span::styled("  1. Abre este URL:", Style::default().fg(MUTED))),
+            Line::from(Span::styled(s.login_open_url, Style::default().fg(MUTED))),
             Line::from(Span::styled(format!("     {auth_url}"), Style::default().fg(ACCENT))),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  2. Código: ", Style::default().fg(MUTED)),
+                Span::styled(s.login_code_prefix, Style::default().fg(MUTED)),
                 Span::styled(user_code, Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("  Esperando autorización...", Style::default().fg(DIM))),
+            Line::from(Span::styled(s.login_waiting, Style::default().fg(DIM))),
         ])
         .block(Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .border_style(Style::default().fg(ACCENT))
-            .title(Span::styled(" ◈ Autenticación ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
+            .title(Span::styled(s.login_overlay_title, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
             .style(Style::default().bg(BG2)))
         .wrap(Wrap { trim: false }),
         popup,
@@ -512,20 +518,17 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
         draw_fav_albums(f, app, area);
         return;
     }
+    let s = app.lang.strings();
     let total = app.playlists.len() + app.mixes.len();
     if total == 0 {
         f.render_widget(
-            Paragraph::new(if app.loading {
-                "  ⟳ Cargando biblioteca..."
-            } else {
-                "  Presiona 'i' para cargar playlists y mixes"
-            })
+            Paragraph::new(if app.loading { s.library_loading } else { s.library_hint })
             .style(Style::default().fg(MUTED))
             .block(Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(DIM))
-                .title(Span::styled(" Biblioteca ", Style::default().fg(MUTED)))),
+                .title(Span::styled(format!(" {} ", s.library_title), Style::default().fg(MUTED)))),
             area,
         );
         return;
@@ -542,7 +545,7 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
                 )),
                 Cell::from(Span::styled(
-                    format!("{} tracks", p.number_of_tracks),
+                    app.lang.tracks_count(p.number_of_tracks),
                     Style::default().fg(MUTED),
                 )),
                 Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
@@ -571,9 +574,9 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(Span::styled("Nombre",  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Info",    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Tipo",    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_name, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_info, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_type, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
     ]).style(Style::default().bg(BG2));
 
     let mut state = ratatui::widgets::TableState::default();
@@ -592,7 +595,7 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(DIM))
             .title(Span::styled(
-                format!(" Biblioteca ({} playlists, {} mixes) ", app.playlists.len(), app.mixes.len()),
+                app.lang.library_title_with_counts(app.playlists.len(), app.mixes.len()),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             )))
         .row_highlight_style(Style::default().bg(BG3)),
@@ -602,15 +605,16 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
+    let s = app.lang.strings();
     if app.fav_albums.is_empty() {
         f.render_widget(
-            Paragraph::new(if app.loading { "  ⟳ Cargando..." } else { "  Sin álbumes favoritos" })
+            Paragraph::new(if app.loading { s.loading } else { s.fav_albums_empty })
                 .style(Style::default().fg(MUTED))
                 .block(Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(" Álbumes favoritos ", Style::default().fg(MUTED)))),
+                    .title(Span::styled(format!(" {} ", s.fav_albums_title), Style::default().fg(MUTED)))),
             area,
         );
         return;
@@ -628,7 +632,7 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
             )),
             Cell::from(Span::styled(truncate(&a.artist_names(), 28), Style::default().fg(MUTED))),
             Cell::from(Span::styled(
-                format!("{} tracks", a.number_of_tracks),
+                app.lang.tracks_count(a.number_of_tracks),
                 Style::default().fg(DIM),
             )),
         ])
@@ -637,9 +641,9 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(Span::styled("Álbum",   Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Artista", Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Tracks",  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_album,  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_artist, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(s.col_tracks, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
     ]).style(Style::default().bg(BG2));
 
     let mut state = ratatui::widgets::TableState::default();
@@ -658,7 +662,7 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(DIM))
             .title(Span::styled(
-                format!(" ◆ Álbumes favoritos ({}) — Enter para cargar ", app.fav_albums.len()),
+                app.lang.fav_albums_title_with_count(app.fav_albums.len()),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             )))
         .row_highlight_style(Style::default().bg(BG3)),

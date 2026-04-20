@@ -1,17 +1,19 @@
+mod i18n;
 mod tidal;
 mod ui;
 mod player;
 mod app;
+mod api;
 
 use anyhow::Result;
-use app::{App, AppEvent, InputMode, Tab};
+use app::{App, AppEvent, ApiStatus, InputMode, Tab};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, time::Duration};
+use std::{io, sync::{Arc, RwLock}, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -28,15 +30,27 @@ async fn main() -> Result<()> {
     let mut app = App::new();
     app.picker = picker;
 
-    app.status_msg = "Cargando sesión...".to_string();
+    app.status_msg = app.lang.strings().status_session_loading.to_string();
     if app.tidal.load_session().await.is_ok() {
-        app.status_msg = "✓ Sesión activa".to_string();
+        app.status_msg = app.lang.strings().status_session_active.to_string();
         app.authenticated = true;
     } else {
-        app.status_msg = "Presiona 'L' para iniciar sesión en Tidal".to_string();
+        app.status_msg = app.lang.strings().status_press_l.to_string();
     }
 
-    let result = run_app(&mut terminal, &mut app).await;
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<AppEvent>();
+    app.event_tx = Some(event_tx.clone());
+
+    let api_status = Arc::new(RwLock::new(ApiStatus::default()));
+    tokio::spawn(api::start_server(
+        event_tx,
+        api_status.clone(),
+        app.tidal.script_path.clone(),
+        app.tidal.quality,
+        app.tidal.python_path.clone(),
+    ));
+
+    let result = run_app(&mut terminal, &mut app, event_rx, api_status).await;
 
     disable_raw_mode()?;
     execute!(
@@ -55,14 +69,12 @@ async fn main() -> Result<()> {
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
+    mut rx: mpsc::UnboundedReceiver<AppEvent>,
+    api_status: Arc<RwLock<ApiStatus>>,
 ) -> Result<()> {
     let mut ui_tick   = interval(Duration::from_millis(50));
     let mut auth_tick = interval(Duration::from_secs(5));
     auth_tick.reset();
-
-    // Canal para recibir resultados de operaciones async
-    let (tx, mut rx) = mpsc::unbounded_channel::<AppEvent>();
-    app.event_tx = Some(tx);
 
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
@@ -75,6 +87,9 @@ async fn run_app<B: ratatui::backend::Backend>(
 
             _ = ui_tick.tick() => {
                 app.player.tick();
+                if let Ok(mut s) = api_status.write() {
+                    *s = app.api_status_snapshot();
+                }
 
                 // Avance automático al siguiente track
                 if app.player.state == player::PlayerState::Stopped
@@ -180,6 +195,7 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('1') => app.set_quality(tidal::Quality::HiResLossless),
         KeyCode::Char('2') => app.set_quality(tidal::Quality::Lossless),
         KeyCode::Char('3') => app.set_quality(tidal::Quality::High),
+        KeyCode::Char('`') => app.cycle_lang(),
         _ => {}
     }
 }
