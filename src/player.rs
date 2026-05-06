@@ -54,15 +54,18 @@ impl Player {
         // Eliminar socket anterior si quedó huérfano
         let _ = std::fs::remove_file(SOCKET_PATH);
 
+        let mut mpv_args = vec![
+            "--no-video".to_string(),
+            "--really-quiet".to_string(),
+            format!("--input-ipc-server={SOCKET_PATH}"),
+            format!("--volume={}", self.volume),
+        ];
+        #[cfg(target_os = "linux")]
+        mpv_args.push("--audio-device=alsa/default".to_string());
+        mpv_args.push(url.to_string());
+
         let child = Command::new("mpv")
-            .args([
-                "--no-video",
-                "--really-quiet",
-                &format!("--input-ipc-server={SOCKET_PATH}"),  // ← IPC socket
-                &format!("--volume={}", self.volume),
-                "--audio-device=alsa/default",
-                url,
-            ])
+            .args(&mpv_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -118,6 +121,14 @@ impl Player {
             }
             PlayerState::Stopped => {}
         }
+    }
+
+    pub fn set_volume(&mut self, v: u8) {
+        self.volume = v.min(100);
+        self.ipc_cmd(&format!(
+            r#"{{"command":["set_property","volume",{}]}}"#,
+            self.volume
+        ));
     }
 
     pub fn volume_up(&mut self) {
