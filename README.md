@@ -40,7 +40,7 @@ pip install tidalapi
 ## Installation
 
 ```bash
-git clone https://github.com/youruser/tuidal
+git clone https://github.com/VicMeGa/tuidal
 cd tuidal
 cargo build --release
 ```
@@ -178,6 +178,7 @@ cargo run
 | `3` | Quality: AAC 320kbps |
 | `L` | Login to Tidal |
 | `q` | Quit |
+| `AltGr` + `\``| 2 times to Change language (español -> English -> Deutsch -> română) |
 
 ---
 
