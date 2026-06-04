@@ -177,6 +177,7 @@ cargo run
 | `2` | Quality: FLAC 16bit/44.1kHz |
 | `3` | Quality: AAC 320kbps |
 | `L` | Login to Tidal |
+| `Alt+L` | Cycle language (ES → EN → DE → RO) |
 | `q` | Quit |
 | `AltGr` + `\``| 2 times to Change language (español -> English -> Deutsch -> română) |
 

@@ -1,13 +1,13 @@
 /// tidal.rs — Llama a tidal.py como subproceso y parsea el JSON que devuelve.
-
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 use std::process::{Command, Stdio};
 
 // ─── Calidades ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Quality {
     HiResLossless,
     Lossless,
@@ -18,15 +18,15 @@ impl Quality {
     pub fn as_api_str(&self) -> &'static str {
         match self {
             Quality::HiResLossless => "HI_RES_LOSSLESS",
-            Quality::Lossless      => "LOSSLESS",
-            Quality::High          => "HIGH",
+            Quality::Lossless => "LOSSLESS",
+            Quality::High => "HIGH",
         }
     }
     pub fn label(&self) -> &'static str {
         match self {
             Quality::HiResLossless => "HiRes FLAC 24bit",
-            Quality::Lossless      => "FLAC 16bit/44.1kHz",
-            Quality::High          => "AAC 320kbps",
+            Quality::Lossless => "FLAC 16bit/44.1kHz",
+            Quality::High => "AAC 320kbps",
         }
     }
 }
@@ -36,33 +36,37 @@ impl Quality {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Artist {
-    pub id:   u64,
+    pub id: u64,
     pub name: String,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Album {
-    pub id:    u64,
+    pub id: u64,
     pub title: String,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Track {
-    pub id:            u64,
-    pub title:         String,
-    pub duration:      u64,
-    pub track_number:  Option<u32>,
-    pub artists:       Vec<Artist>,
-    pub album:         Album,
+    pub id: u64,
+    pub title: String,
+    pub duration: u64,
+    pub track_number: Option<u32>,
+    pub artists: Vec<Artist>,
+    pub album: Album,
     pub audio_quality: Option<String>,
-    pub explicit:      Option<bool>,
+    pub explicit: Option<bool>,
 }
 
 impl Track {
     pub fn artist_names(&self) -> String {
-        self.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+        self.artists
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn duration_str(&self) -> String {
@@ -74,8 +78,8 @@ impl Track {
     pub fn quality_icon(&self) -> &'static str {
         match self.audio_quality.as_deref() {
             Some("HI_RES_LOSSLESS") => "◈",
-            Some("LOSSLESS")        => "◆",
-            _                       => "◇",
+            Some("LOSSLESS") => "◆",
+            _ => "◇",
         }
     }
 }
@@ -85,26 +89,30 @@ impl Track {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavAlbum {
-    pub id:               u64,
-    pub title:            String,
+    pub id: u64,
+    pub title: String,
     pub number_of_tracks: u32,
-    pub duration:         u64,
-    pub artists:          Vec<Artist>,
-    pub cover_url:        Option<String>,
+    pub duration: u64,
+    pub artists: Vec<Artist>,
+    pub cover_url: Option<String>,
 }
 
 impl FavAlbum {
     pub fn artist_names(&self) -> String {
-        self.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+        self.artists
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
-    pub url:         String,
-    pub bit_depth:   u32,
+    pub url: String,
+    pub bit_depth: u32,
     pub sample_rate: u32,
-    pub codec:       String,
+    pub codec: String,
 }
 
 #[derive(Debug, Clone)]
@@ -116,22 +124,22 @@ pub struct CoverInfo {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Playlist {
-    pub uuid:             String,
-    pub title:            String,
+    pub uuid: String,
+    pub title: String,
     pub number_of_tracks: u32,
-    pub duration:         u64,
+    pub duration: u64,
     #[serde(rename = "type")]
-    pub playlist_type:    String,   // "USER", "EDITORIAL", "ARTIST"
-    pub public_playlist:  Option<bool>,
-    pub image:            Option<String>,
-    pub square_image:     Option<String>,
+    pub playlist_type: String, // "USER", "EDITORIAL", "ARTIST"
+    pub public_playlist: Option<bool>,
+    pub image: Option<String>,
+    pub square_image: Option<String>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mix {
-    pub id:    String,
+    pub id: String,
     pub title: String,
     pub sub_title: Option<String>,
 }
@@ -140,8 +148,8 @@ pub struct Mix {
 
 #[derive(Deserialize)]
 struct AuthStartResp {
-    url:   Option<String>,
-    code:  Option<String>,
+    url: Option<String>,
+    code: Option<String>,
     error: Option<String>,
 }
 
@@ -154,23 +162,95 @@ struct AuthPollResp {
 
 #[derive(Deserialize)]
 struct StreamResp {
-    url:         Option<String>,
-    codec:       Option<String>,
-    bit_depth:   Option<u32>,
+    url: Option<String>,
+    codec: Option<String>,
+    bit_depth: Option<u32>,
     sample_rate: Option<u32>,
-    error:       Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct CoverResp {
-    url:   Option<String>,
+    url: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LyricsResponse {
+    #[allow(dead_code)]
+    #[serde(rename = "trackId")]
+    pub track_id: u64,
+    pub lyrics: Option<String>,
+    pub subtitles: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Lyrics {
+    pub lines: Vec<(u64, String)>, // (timestamp_secs, text)
+    pub plain: String,
+    pub has_sync: bool,
+}
+
+impl Lyrics {
+    pub fn from_response(resp: LyricsResponse) -> Self {
+        let plain = resp.lyrics.unwrap_or_default();
+        let has_sync = resp.subtitles.as_ref().map_or(false, |s| !s.is_empty());
+
+        if has_sync {
+            let lines = parse_lrc(&resp.subtitles.unwrap_or_default());
+            Self {
+                lines,
+                plain,
+                has_sync: true,
+            }
+        } else {
+            Self {
+                lines: Vec::new(),
+                plain,
+                has_sync: false,
+            }
+        }
+    }
+
+    pub fn current_line(&self, elapsed_secs: u64) -> usize {
+        if !self.has_sync || self.lines.is_empty() {
+            return 0;
+        }
+        // binary search for the last line with timestamp <= elapsed
+        match self.lines.binary_search_by(|(ts, _)| ts.cmp(&elapsed_secs)) {
+            Ok(i) => i,
+            Err(0) => 0,
+            Err(i) => i - 1,
+        }
+    }
+}
+
+fn parse_lrc(lrc: &str) -> Vec<(u64, String)> {
+    let mut result = Vec::new();
+    for line in lrc.lines() {
+        let line = line.trim();
+        if line.len() < 8 || !line.starts_with('[') {
+            continue;
+        }
+        let close = line.find(']').unwrap_or(0);
+        if close < 6 {
+            continue;
+        }
+        let ts = &line[1..close];
+        let text = line[close + 1..].trim().to_string();
+        if let Some((min_str, rest)) = ts.split_once(':') {
+            let min: u64 = min_str.parse().unwrap_or(0);
+            let sec: f64 = rest.parse().unwrap_or(0.0);
+            result.push((min * 60 + sec as u64, text));
+        }
+    }
+    result
 }
 
 // ─── Cliente ──────────────────────────────────────────────────────────────────
 
 pub struct TidalClient {
-    pub quality:     Quality,
+    pub quality: Quality,
     pub script_path: String,
     pub python_path: String,
 }
@@ -186,13 +266,26 @@ impl TidalClient {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "tidal.py".to_string());
 
-        let python_path = std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
+        let python_path =
+            std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
 
-        Self { quality: Quality::Lossless, script_path, python_path }
+        Self {
+            quality: Quality::Lossless,
+            script_path,
+            python_path,
+        }
     }
 
-    pub fn with_path_and_quality(script_path: String, quality: Quality, python_path: String) -> Self {
-        Self { quality, script_path, python_path }
+    pub fn with_path_and_quality(
+        script_path: String,
+        quality: Quality,
+        python_path: String,
+    ) -> Self {
+        Self {
+            quality,
+            script_path,
+            python_path,
+        }
     }
 
     fn run(&self, args: &[&str]) -> Result<String> {
@@ -200,14 +293,12 @@ impl TidalClient {
             .arg(&self.script_path)
             .args(args)
             .output()
-            .map_err(|e| anyhow!(
-                "No se pudo ejecutar python3: {e}\n¿Está tidal.py en '{}'?",
-                self.script_path
-            ))?;
-
-        if !output.stderr.is_empty() {
-            eprintln!("[tidal.py] {}", String::from_utf8_lossy(&output.stderr).trim());
-        }
+            .map_err(|e| {
+                anyhow!(
+                    "No se pudo ejecutar python3: {e}\n¿Está tidal.py en '{}'?",
+                    self.script_path
+                )
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if stdout.is_empty() {
@@ -216,7 +307,7 @@ impl TidalClient {
         Ok(stdout)
     }
 
-   pub async fn get_favorite_tracks(&self) -> Result<Vec<Track>> {
+    pub async fn get_favorite_tracks(&self) -> Result<Vec<Track>> {
         let stdout = self.run(&["fav_tracks"])?;
         let tracks: Vec<Track> = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
@@ -243,8 +334,11 @@ impl TidalClient {
         let stdout = self.run(&["auth", "poll"])?;
         let resp: AuthPollResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
-        if resp.authenticated.unwrap_or(false) { Ok(()) }
-        else { Err(anyhow!("Sin sesión activa")) }
+        if resp.authenticated.unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(anyhow!("Sin sesión activa"))
+        }
     }
 
     pub async fn start_device_auth(&self) -> Result<(String, String, String)> {
@@ -263,17 +357,21 @@ impl TidalClient {
             // corriendo en background — el thread de Python sigue esperando la
             // autorización y escribe el resultado en POLL_FILE.
             let reader = std::io::BufReader::new(child.stdout.take().unwrap());
-            let first_line = reader.lines()
+            let first_line = reader
+                .lines()
                 .next()
                 .ok_or_else(|| anyhow!("tidal.py no produjo output"))?
                 .map_err(|e| anyhow!("Error leyendo output: {e}"))?;
             Ok::<String, anyhow::Error>(first_line)
-        }).await??;
+        })
+        .await??;
 
         let resp: AuthStartResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
-        if let Some(e) = resp.error { return Err(anyhow!("{e}")); }
-        let url  = resp.url.ok_or_else(|| anyhow!("Sin URL de auth"))?;
+        if let Some(e) = resp.error {
+            return Err(anyhow!("{e}"));
+        }
+        let url = resp.url.ok_or_else(|| anyhow!("Sin URL de auth"))?;
         let code = resp.code.unwrap_or_default();
         Ok(("pending".to_string(), code, url))
     }
@@ -282,7 +380,7 @@ impl TidalClient {
         let stdout = self.run(&["auth", "poll"])?;
         let resp: AuthPollResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
-        if !resp.error.is_empty() { eprintln!("[auth poll] {}", resp.error); }
+
         Ok(resp.authenticated.unwrap_or(false))
     }
 
@@ -301,11 +399,13 @@ impl TidalClient {
         let stdout = self.run(&["stream", &id_str, self.quality.as_api_str()])?;
         let resp: StreamResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
-        if let Some(e) = resp.error { return Err(anyhow!("{e}")); }
+        if let Some(e) = resp.error {
+            return Err(anyhow!("{e}"));
+        }
         Ok(StreamInfo {
-            url:         resp.url.ok_or_else(|| anyhow!("Sin URL de stream"))?,
-            codec:       resp.codec.unwrap_or_else(|| "flac".into()),
-            bit_depth:   resp.bit_depth.unwrap_or(16),
+            url: resp.url.ok_or_else(|| anyhow!("Sin URL de stream"))?,
+            codec: resp.codec.unwrap_or_else(|| "flac".into()),
+            bit_depth: resp.bit_depth.unwrap_or(16),
             sample_rate: resp.sample_rate.unwrap_or(44100),
         })
     }
@@ -315,11 +415,24 @@ impl TidalClient {
         let stdout = self.run(&["cover", &id_str])?;
         let resp: CoverResp = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
-        if let Some(e) = resp.error { return Err(anyhow!("{e}")); }
+        if let Some(e) = resp.error {
+            return Err(anyhow!("{e}"));
+        }
         Ok(CoverInfo {
             url: resp.url.unwrap_or_default(),
         })
     }
+    pub async fn get_lyrics(&self, track_id: u64) -> Result<Lyrics> {
+        let id_str = track_id.to_string();
+        let stdout = self.run(&["lyrics", &id_str])?;
+        if stdout.contains("\"error\"") {
+            return Err(anyhow!("Letras no disponibles"));
+        }
+        let resp: LyricsResponse = serde_json::from_str(&stdout)
+            .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
+        Ok(Lyrics::from_response(resp))
+    }
+
     pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>> {
         let stdout = self.run(&["playlists"])?;
         let playlists: Vec<Playlist> = serde_json::from_str(&stdout)

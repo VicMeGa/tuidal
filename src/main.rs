@@ -1,19 +1,23 @@
+mod api;
+mod app;
 mod i18n;
+mod player;
 mod tidal;
 mod ui;
-mod player;
-mod app;
-mod api;
 
 use anyhow::Result;
-use app::{App, AppEvent, ApiStatus, InputMode, Tab};
+use app::{ApiStatus, App, AppEvent, InputMode, Tab};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, sync::{Arc, RwLock}, time::Duration};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::{
+    io,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
@@ -30,6 +34,7 @@ async fn main() -> Result<()> {
     let mut app = App::new();
     app.picker = picker;
 
+    app.load_settings();
     app.status_msg = app.lang.strings().status_session_loading.to_string();
     if app.tidal.load_session().await.is_ok() {
         app.status_msg = app.lang.strings().status_session_active.to_string();
@@ -72,7 +77,7 @@ async fn run_app<B: ratatui::backend::Backend>(
     mut rx: mpsc::UnboundedReceiver<AppEvent>,
     api_status: Arc<RwLock<ApiStatus>>,
 ) -> Result<()> {
-    let mut ui_tick   = interval(Duration::from_millis(50));
+    let mut ui_tick = interval(Duration::from_millis(50));
     let mut auth_tick = interval(Duration::from_secs(5));
     auth_tick.reset();
 
@@ -109,9 +114,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.player.stop();
                             return Ok(());
                         }
-                        match app.input_mode {
-                            InputMode::Normal => handle_normal(key.code, app),
-                            InputMode::Search => handle_search(key.code, app),
+                        if key.code == KeyCode::Char('l') && key.modifiers == KeyModifiers::ALT
+                        {
+                            app.cycle_lang();
+                        } else {
+                            match app.input_mode {
+                                InputMode::Normal => handle_normal(key.code, app),
+                                InputMode::Search => handle_search(key.code, app),
+                            }
                         }
                     }
                 }
@@ -136,25 +146,37 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             app.search_input.clear();
         }
         KeyCode::Char('l') | KeyCode::Char('L') => {
-            if !app.authenticated { app.start_login_bg(); }
+            if !app.authenticated {
+                app.start_login_bg();
+            }
         }
         KeyCode::Char('i') => {
-            if app.authenticated { app.load_library_bg(); }
+            if app.authenticated {
+                app.load_library_bg();
+            }
         }
         KeyCode::Char('F') => {
-            if app.authenticated { app.load_fav_tracks_bg(); }
+            if app.authenticated {
+                app.load_fav_tracks_bg();
+            }
         }
         KeyCode::Char('A') => {
-            if app.authenticated { app.load_fav_albums_bg(); }
+            if app.authenticated {
+                app.load_fav_albums_bg();
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.active_tab == Tab::Library {
                 if app.collection_view == app::CollectionView::Albums {
                     let max = app.fav_albums.len();
-                    if max > 0 { app.fav_album_selected = (app.fav_album_selected + 1) % max; }
+                    if max > 0 {
+                        app.fav_album_selected = (app.fav_album_selected + 1) % max;
+                    }
                 } else {
                     let max = app.playlists.len() + app.mixes.len();
-                    if max > 0 { app.library_selected = (app.library_selected + 1) % max; }
+                    if max > 0 {
+                        app.library_selected = (app.library_selected + 1) % max;
+                    }
                 }
             } else {
                 app.next_track();
@@ -165,12 +187,20 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 if app.collection_view == app::CollectionView::Albums {
                     let max = app.fav_albums.len();
                     if max > 0 {
-                        app.fav_album_selected = if app.fav_album_selected == 0 { max - 1 } else { app.fav_album_selected - 1 };
+                        app.fav_album_selected = if app.fav_album_selected == 0 {
+                            max - 1
+                        } else {
+                            app.fav_album_selected - 1
+                        };
                     }
                 } else {
                     let max = app.playlists.len() + app.mixes.len();
                     if max > 0 {
-                        app.library_selected = if app.library_selected == 0 { max - 1 } else { app.library_selected - 1 };
+                        app.library_selected = if app.library_selected == 0 {
+                            max - 1
+                        } else {
+                            app.library_selected - 1
+                        };
                     }
                 }
             } else {
@@ -188,14 +218,13 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),
         KeyCode::Right => app.player.seek_forward(),
-        KeyCode::Left  => app.player.seek_backward(),
-        KeyCode::Char('+') | KeyCode::Char('=') => app.player.volume_up(),
-        KeyCode::Char('-') => app.player.volume_down(),
+        KeyCode::Left => app.player.seek_backward(),
+        KeyCode::Char('+') | KeyCode::Char('=') => app.volume_up(),
+        KeyCode::Char('-') => app.volume_down(),
         KeyCode::Tab => app.next_tab(),
         KeyCode::Char('1') => app.set_quality(tidal::Quality::HiResLossless),
         KeyCode::Char('2') => app.set_quality(tidal::Quality::Lossless),
         KeyCode::Char('3') => app.set_quality(tidal::Quality::High),
-        KeyCode::Char('`') => app.cycle_lang(),
         _ => {}
     }
 }

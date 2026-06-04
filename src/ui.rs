@@ -1,29 +1,26 @@
 //use crate::app::{App, InputMode, Tab};
-use crate::app::{App, InputMode, Tab, CollectionView};
+use crate::app::{App, CollectionView, InputMode, Tab};
 use crate::player::PlayerState;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Cell, Clear,
-        Padding, Paragraph, Row, Table, Wrap,
-    },
-    Frame,
+    widgets::{Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap},
 };
 //use ratatui_image::{picker::Picker, StatefulImage, Resize};
-use ratatui_image::{StatefulImage, Resize};
+use ratatui_image::{Resize, StatefulImage};
 
-const BG:      Color = Color::Rgb(10, 10, 14);
-const BG2:     Color = Color::Rgb(18, 18, 26);
-const BG3:     Color = Color::Rgb(28, 28, 40);
-const ACCENT:  Color = Color::Rgb(99, 202, 183);
+const BG: Color = Color::Rgb(10, 10, 14);
+const BG2: Color = Color::Rgb(18, 18, 26);
+const BG3: Color = Color::Rgb(28, 28, 40);
+const ACCENT: Color = Color::Rgb(99, 202, 183);
 const ACCENT2: Color = Color::Rgb(180, 110, 255);
-const GOLD:    Color = Color::Rgb(255, 200, 80);
-const TEXT:    Color = Color::Rgb(210, 208, 220);
-const MUTED:   Color = Color::Rgb(110, 108, 130);
-const DIM:     Color = Color::Rgb(60, 58, 80);
-const RED:     Color = Color::Rgb(255, 85, 100);
+const GOLD: Color = Color::Rgb(255, 200, 80);
+const TEXT: Color = Color::Rgb(210, 208, 220);
+const MUTED: Color = Color::Rgb(110, 108, 130);
+const DIM: Color = Color::Rgb(60, 58, 80);
+const RED: Color = Color::Rgb(255, 85, 100);
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -61,32 +58,42 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("◈ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled("TIDAL", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "◈ ",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "TIDAL",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" TUI", Style::default().fg(MUTED)),
         ]))
-        .block(Block::default()
-            .borders(Borders::BOTTOM | Borders::RIGHT)
-            .border_style(Style::default().fg(DIM))
-            .padding(Padding::horizontal(1))),
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM | Borders::RIGHT)
+                .border_style(Style::default().fg(DIM))
+                .padding(Padding::horizontal(1)),
+        ),
         cols[0],
     );
 
     let s = app.lang.strings();
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            tab_span(s.tab_search,  Tab::Search,  &app.active_tab),
+            tab_span(s.tab_search, Tab::Search, &app.active_tab),
             Span::styled("  ", Style::default()),
-            tab_span(s.tab_queue,   Tab::Queue,   &app.active_tab),
+            tab_span(s.tab_queue, Tab::Queue, &app.active_tab),
             Span::styled("  ", Style::default()),
-            tab_span(s.tab_now,     Tab::Now,     &app.active_tab),
+            tab_span(s.tab_now, Tab::Now, &app.active_tab),
             Span::styled("  ", Style::default()),
             tab_span(s.tab_library, Tab::Library, &app.active_tab),
         ]))
-        .block(Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(DIM))
-            .padding(Padding::new(1, 0, 1, 0))),
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(DIM))
+                .padding(Padding::new(1, 0, 1, 0)),
+        ),
         cols[1],
     );
 
@@ -97,22 +104,36 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("[{}]  ", app.lang.label()), Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("[{}]  ", app.lang.label()),
+                Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+            ),
             auth_icon,
-            Span::styled(app.tidal.quality.label(), Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                app.tidal.quality.label(),
+                Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+            ),
         ]))
         .alignment(Alignment::Right)
-        .block(Block::default()
-            .borders(Borders::BOTTOM | Borders::LEFT)
-            .border_style(Style::default().fg(DIM))
-            .padding(Padding::horizontal(1))),
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM | Borders::LEFT)
+                .border_style(Style::default().fg(DIM))
+                .padding(Padding::horizontal(1)),
+        ),
         cols[2],
     );
 }
 
 fn tab_span<'a>(label: &'a str, tab: Tab, active: &Tab) -> Span<'a> {
     if &tab == active {
-        Span::styled(format!(" {label} "), Style::default().fg(BG).bg(ACCENT).add_modifier(Modifier::BOLD))
+        Span::styled(
+            format!(" {label} "),
+            Style::default()
+                .fg(BG)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled(format!(" {label} "), Style::default().fg(MUTED))
     }
@@ -121,8 +142,8 @@ fn tab_span<'a>(label: &'a str, tab: Tab, active: &Tab) -> Span<'a> {
 fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
     match app.active_tab {
         Tab::Search => draw_search_tab(f, app, area),
-        Tab::Queue  => draw_queue_tab(f, app, area),
-        Tab::Now    => draw_now_tab(f, app, area),
+        Tab::Queue => draw_queue_tab(f, app, area),
+        Tab::Now => draw_now_tab(f, app, area),
         Tab::Library => draw_library_tab(f, app, area),
     }
 }
@@ -136,30 +157,61 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
     let is_searching = app.input_mode == InputMode::Search;
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("/ ", Style::default()
-                .fg(if is_searching { ACCENT } else { MUTED })
-                .add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "/ ",
+                Style::default()
+                    .fg(if is_searching { ACCENT } else { MUTED })
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(app.search_input.as_str(), Style::default().fg(TEXT)),
             if is_searching {
-                Span::styled("▎", Style::default().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK))
-            } else { Span::raw("") },
+                Span::styled(
+                    "▎",
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                )
+            } else {
+                Span::raw("")
+            },
             if app.search_input.is_empty() && !is_searching {
-                Span::styled(app.lang.strings().search_placeholder, Style::default().fg(DIM))
-            } else { Span::raw("") },
+                Span::styled(
+                    app.lang.strings().search_placeholder,
+                    Style::default().fg(DIM),
+                )
+            } else {
+                Span::raw("")
+            },
         ]))
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(if is_searching { ACCENT } else { DIM }))
-            .padding(Padding::horizontal(1))),
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if is_searching { ACCENT } else { DIM }))
+                .padding(Padding::horizontal(1)),
+        ),
         chunks[0],
     );
 
-    draw_track_list(f, app, chunks[1], &app.search_results.clone(), app.selected, app.lang.strings().search_results_title);
+    draw_track_list(
+        f,
+        app,
+        chunks[1],
+        &app.search_results.clone(),
+        app.selected,
+        app.lang.strings().search_results_title,
+    );
 }
 
 fn draw_queue_tab(f: &mut Frame, app: &App, area: Rect) {
-    draw_track_list(f, app, area, &app.queue.clone(), app.selected, app.lang.strings().queue_title);
+    draw_track_list(
+        f,
+        app,
+        area,
+        &app.queue.clone(),
+        app.selected,
+        app.lang.strings().queue_title,
+    );
 }
 
 fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
@@ -168,11 +220,16 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(
             Paragraph::new(format!("\n\n  {}", s.now_playing_empty))
                 .style(Style::default().fg(MUTED))
-                .block(Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(format!(" {} ", s.now_playing_title), Style::default().fg(MUTED)))),
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(DIM))
+                        .title(Span::styled(
+                            format!(" {} ", s.now_playing_title),
+                            Style::default().fg(MUTED),
+                        )),
+                ),
             area,
         );
         return;
@@ -182,11 +239,12 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(img_cols),   // cuadrado
-            Constraint::Min(0),             // resto para info
+            Constraint::Length(img_cols), // cuadrado
+            Constraint::Min(0),           // resto para info + letras
         ])
         .split(area);
 
+    // ── Columna izquierda: carátula ─────────────────────────────────────────
     let img_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -195,27 +253,16 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
     let img_inner = img_block.inner(cols[0]);
     f.render_widget(img_block, cols[0]);
 
-    // Recrear proto si cambió el área o la imagen
     let area_size = (img_inner.width, img_inner.height);
-     // Recrear el proto si cambió el área O si no existe
-    // (el picker ya fue creado antes de raw mode, así que es válido)
     if app.cover_proto.is_none() || app.last_img_area != Some(area_size) {
         app.last_img_area = Some(area_size);
-        app.cover_proto = None; // descartar el anterior
-
+        app.cover_proto = None;
         if let (Some(picker), Some(img)) = (&app.picker, &app.cover_image) {
-            // Escalar la imagen al tamaño del área ANTES de crear el protocol
-            // Esto evita que ratatui-image tenga que adivinar el tamaño
             let (cols, rows) = (img_inner.width as u32, img_inner.height as u32);
-            let font_size    = picker.font_size(); // (ancho_px, alto_px) por celda
-            let target_w     = cols * font_size.0 as u32;
-            let target_h     = rows * font_size.1 as u32;
-
-            let scaled = img.resize(
-                target_w,
-                target_h,
-                image::imageops::FilterType::Lanczos3,
-            );
+            let font_size = picker.font_size();
+            let target_w = cols * font_size.0 as u32;
+            let target_h = rows * font_size.1 as u32;
+            let scaled = img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
             app.cover_proto = Some(picker.new_resize_protocol(scaled));
         }
     }
@@ -232,48 +279,179 @@ fn draw_now_tab(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
+    // ── Columna derecha: info (arriba) + letras (abajo) ────────────────────
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(12), Constraint::Min(0)])
+        .split(cols[1]);
+
     // Info
     let info_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(DIM))
-        .title(Span::styled(format!(" {} ", s.now_playing_title), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            format!(" {} ", s.now_playing_title),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
         .style(Style::default().bg(BG2));
-    let info_inner = info_block.inner(cols[1]);
-    f.render_widget(info_block, cols[1]);
+    let info_inner = info_block.inner(right_chunks[0]);
+    f.render_widget(info_block, right_chunks[0]);
 
     if let Some(ref track) = app.player.current {
         let max_w = (info_inner.width as usize).saturating_sub(4);
-        let progress  = app.player.progress();
+        let progress = app.player.progress();
         let bar_width = info_inner.width.saturating_sub(14) as usize;
-        let filled    = (progress * bar_width as f64) as usize;
-        let rest      = bar_width.saturating_sub(filled);
+        let filled = (progress * bar_width as f64) as usize;
+        let rest = bar_width.saturating_sub(filled);
         let duration_str = format!("{}:{:02}", track.duration / 60, track.duration % 60);
 
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::from(Span::styled(format!("  {}", truncate(&track.title, max_w)), Style::default().fg(TEXT).add_modifier(Modifier::BOLD))),
-                Line::from(""),
-                Line::from(Span::styled(format!("  {}", truncate(&track.artist, max_w)), Style::default().fg(ACCENT))),
-                Line::from(Span::styled(format!("  {}", truncate(&track.album, max_w)), Style::default().fg(MUTED))),
+                Line::from(Span::styled(
+                    format!("  {}", truncate(&track.title, max_w)),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    format!("  {}bit / {}kHz  {}", track.bit_depth, track.sample_rate / 1000, track.codec.to_uppercase()),
+                    format!("  {}", truncate(&track.artist, max_w)),
+                    Style::default().fg(ACCENT),
+                )),
+                Line::from(Span::styled(
+                    format!("  {}", truncate(&track.album, max_w)),
+                    Style::default().fg(MUTED),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!(
+                        "  {}bit / {}kHz  {}",
+                        track.bit_depth,
+                        track.sample_rate / 1000,
+                        track.codec.to_uppercase()
+                    ),
                     Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled(format!("  {} ", app.player.elapsed_str()), Style::default().fg(MUTED)),
+                    Span::styled(
+                        format!("  {} ", app.player.elapsed_str()),
+                        Style::default().fg(MUTED),
+                    ),
                     Span::styled("━".repeat(filled), Style::default().fg(ACCENT)),
-                    Span::styled("╌".repeat(rest),   Style::default().fg(DIM)),
+                    Span::styled("╌".repeat(rest), Style::default().fg(DIM)),
                     Span::styled(format!(" {duration_str}"), Style::default().fg(MUTED)),
                 ]),
             ]),
             info_inner,
         );
     }
+
+    // ── Letras ──────────────────────────────────────────────────────────────
+    draw_lyrics(f, app, right_chunks[1]);
+}
+
+fn draw_lyrics(f: &mut Frame, app: &App, area: Rect) {
+    if area.width < 10 || area.height < 2 {
+        return;
+    }
+    let Some(ref lyrics) = app.lyrics else {
+        if app.player.current.is_some() {
+            let s = app.lang.strings();
+            f.render_widget(
+                Paragraph::new(s.loading)
+                    .style(Style::default().fg(DIM))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded)
+                            .border_style(Style::default().fg(DIM))
+                            .title(Span::styled(
+                                format!(" {} ", s.now_lyrics),
+                                Style::default().fg(MUTED),
+                            )),
+                    ),
+                area,
+            );
+        }
+        return;
+    };
+
+    let plain_empty = lyrics.plain.trim().is_empty();
+    if plain_empty {
+        let s = app.lang.strings();
+        f.render_widget(
+            Paragraph::new(format!("\n  {}", s.now_no_lyrics))
+                .style(Style::default().fg(DIM))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().fg(DIM))
+                        .title(Span::styled(
+                            format!(" {} ", s.now_lyrics),
+                            Style::default().fg(MUTED),
+                        )),
+                ),
+            area,
+        );
+        return;
+    }
+
+    let lyrics_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(DIM))
+        .title(Span::styled(
+            format!(" {} ", app.lang.strings().now_lyrics),
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(BG2));
+    let inner = lyrics_block.inner(area);
+    f.render_widget(lyrics_block, area);
+
+    if inner.height < 2 {
+        return;
+    }
+
+    let elapsed = app.player.elapsed.as_secs();
+    let max_lines = inner.height as usize;
+
+    let lyric_lines: Vec<Line> = if lyrics.has_sync && !lyrics.lines.is_empty() {
+        let current = lyrics.current_line(elapsed);
+        let half = max_lines / 2;
+        let start = if current > half { current - half } else { 0 };
+        let end = (start + max_lines).min(lyrics.lines.len());
+
+        lyrics.lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, (_ts, text))| {
+                let idx = start + i;
+                if idx == current {
+                    Line::from(Span::styled(
+                        text.as_str(),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    ))
+                } else {
+                    Line::from(Span::styled(text.as_str(), Style::default().fg(TEXT)))
+                }
+            })
+            .collect()
+    } else {
+        lyrics
+            .plain
+            .lines()
+            .take(max_lines)
+            .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(TEXT))))
+            .collect()
+    };
+
+    f.render_widget(
+        Paragraph::new(lyric_lines).style(Style::default().bg(BG2)),
+        inner,
+    );
 }
 
 fn draw_track_list(
@@ -286,18 +464,25 @@ fn draw_track_list(
 ) {
     let s = app.lang.strings();
     if tracks.is_empty() {
-        let msg = if app.loading { s.loading }
-            else if !app.authenticated { s.not_authenticated }
-            else { s.no_results_hint };
+        let msg = if app.loading {
+            s.loading
+        } else if !app.authenticated {
+            s.not_authenticated
+        } else {
+            s.no_results_hint
+        };
         f.render_widget(
-            Paragraph::new(msg)
-                .style(Style::default().fg(MUTED))
-                .block(Block::default()
+            Paragraph::new(msg).style(Style::default().fg(MUTED)).block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(format!(" {title} "), Style::default().fg(MUTED)))
-                    .padding(Padding::new(1, 1, 1, 0))),
+                    .title(Span::styled(
+                        format!(" {title} "),
+                        Style::default().fg(MUTED),
+                    ))
+                    .padding(Padding::new(1, 1, 1, 0)),
+            ),
             area,
         );
         return;
@@ -305,69 +490,118 @@ fn draw_track_list(
 
     let now_playing_id = app.queue_index.and_then(|i| app.queue.get(i)).map(|t| t.id);
 
-    let rows: Vec<Row> = tracks.iter().enumerate().map(|(i, t)| {
-        let is_selected    = i == selected;
-        let is_now_playing = Some(t.id) == now_playing_id;
-        let row_bg = if is_selected { BG3 } else if i % 2 == 0 { BG } else { BG2 };
+    let rows: Vec<Row> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let is_selected = i == selected;
+            let is_now_playing = Some(t.id) == now_playing_id;
+            let row_bg = if is_selected {
+                BG3
+            } else if i % 2 == 0 {
+                BG
+            } else {
+                BG2
+            };
 
-        Row::new(vec![
-            Cell::from(Span::styled(format!("{:>3}", i + 1), Style::default().fg(MUTED))),
-            Cell::from(Line::from(vec![
-                if is_now_playing {
-                    Span::styled("▶ ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
-                } else {
-                    Span::styled("  ", Style::default())
-                },
-                Span::styled(format!("{} ", t.quality_icon()), Style::default().fg(
-                    match t.audio_quality.as_deref() {
-                        Some("HI_RES_LOSSLESS") => GOLD,
-                        Some("LOSSLESS")        => ACCENT,
-                        _                       => MUTED,
-                    }
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("{:>3}", i + 1),
+                    Style::default().fg(MUTED),
                 )),
-                Span::styled(
-                    truncate(&t.title, 36),
-                    Style::default()
-                        .fg(if is_now_playing { ACCENT } else { TEXT })
-                        .add_modifier(if is_now_playing { Modifier::BOLD } else { Modifier::empty() }),
-                ),
-            ])),
-            Cell::from(Span::styled(truncate(&t.artist_names(), 24), Style::default().fg(MUTED))),
-            Cell::from(Span::styled(truncate(&t.album.title, 22), Style::default().fg(DIM))),
-            Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
-        ])
-        .style(Style::default().bg(row_bg))
-        .height(1)
-    }).collect();
+                Cell::from(Line::from(vec![
+                    if is_now_playing {
+                        Span::styled(
+                            "▶ ",
+                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled("  ", Style::default())
+                    },
+                    Span::styled(
+                        format!("{} ", t.quality_icon()),
+                        Style::default().fg(match t.audio_quality.as_deref() {
+                            Some("HI_RES_LOSSLESS") => GOLD,
+                            Some("LOSSLESS") => ACCENT,
+                            _ => MUTED,
+                        }),
+                    ),
+                    Span::styled(
+                        truncate(&t.title, 36),
+                        Style::default()
+                            .fg(if is_now_playing { ACCENT } else { TEXT })
+                            .add_modifier(if is_now_playing {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    ),
+                ])),
+                Cell::from(Span::styled(
+                    truncate(&t.artist_names(), 24),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.album.title, 22),
+                    Style::default().fg(DIM),
+                )),
+                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
+            ])
+            .style(Style::default().bg(row_bg))
+            .height(1)
+        })
+        .collect();
 
     let header = Row::new(vec![
-        Cell::from(Span::styled("  #",           Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_title,     Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_artist,    Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_album,     Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_duration,  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-    ]).style(Style::default().bg(BG2)).height(1);
+        Cell::from(Span::styled(
+            "  #",
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_title,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_artist,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_album,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_duration,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+    ])
+    .style(Style::default().bg(BG2))
+    .height(1);
 
     let mut state = ratatui::widgets::TableState::default();
     state.select(Some(selected));
     f.render_stateful_widget(
-        Table::new(rows, [
-            Constraint::Length(4),
-            Constraint::Min(30),
-            Constraint::Length(24),
-            Constraint::Length(22),
-            Constraint::Length(6),
-        ])
+        Table::new(
+            rows,
+            [
+                Constraint::Length(4),
+                Constraint::Min(30),
+                Constraint::Length(24),
+                Constraint::Length(22),
+                Constraint::Length(6),
+            ],
+        )
         .header(header)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM))
-            .title(Span::styled(
-                format!(" {title} ({}) ", tracks.len()),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))
-            .padding(Padding::ZERO))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM))
+                .title(Span::styled(
+                    format!(" {title} ({}) ", tracks.len()),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ))
+                .padding(Padding::ZERO),
+        )
         .row_highlight_style(Style::default().bg(BG3))
         .highlight_symbol("  "),
         area,
@@ -388,28 +622,52 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
     let inner = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(area);
 
     let (state_icon, state_color) = match app.player.state {
         PlayerState::Playing => ("▶", ACCENT),
-        PlayerState::Paused  => ("⏸", GOLD),
+        PlayerState::Paused => ("⏸", GOLD),
         PlayerState::Stopped => ("■", MUTED),
     };
 
     f.render_widget(
         Paragraph::new(if let Some(info) = &app.player.current {
             Line::from(vec![
-                Span::styled(format!(" {state_icon} "), Style::default().fg(state_color).add_modifier(Modifier::BOLD)),
-                Span::styled(truncate(&info.title, 30), Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!(" {state_icon} "),
+                    Style::default()
+                        .fg(state_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    truncate(&info.title, 30),
+                    Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("  —  ", Style::default().fg(DIM)),
                 Span::styled(truncate(&info.artist, 24), Style::default().fg(MUTED)),
                 Span::styled("   ", Style::default()),
                 Span::styled(
-                    format!("{}bit/{}kHz {}", info.bit_depth, info.sample_rate / 1000, info.codec.to_uppercase()),
+                    format!(
+                        "{}bit/{}kHz {}",
+                        info.bit_depth,
+                        info.sample_rate / 1000,
+                        info.codec.to_uppercase()
+                    ),
                     Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("   {}  vol {}%", app.player.elapsed_str(), app.player.volume), Style::default().fg(MUTED)),
+                Span::styled(
+                    format!(
+                        "   {}  vol {}%",
+                        app.player.elapsed_str(),
+                        app.player.volume
+                    ),
+                    Style::default().fg(MUTED),
+                ),
             ])
         } else {
             Line::from(vec![
@@ -420,19 +678,25 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
         inner[0],
     );
 
-    let progress     = app.player.progress();
-    let duration_str = app.player.current.as_ref()
+    let progress = app.player.progress();
+    let duration_str = app
+        .player
+        .current
+        .as_ref()
         .map(|t| format!("{}:{:02}", t.duration / 60, t.duration % 60))
         .unwrap_or_else(|| "0:00".to_string());
     let bar_width = inner[1].width.saturating_sub(12) as usize;
-    let filled    = (progress * bar_width as f64) as usize;
-    let rest      = bar_width.saturating_sub(filled);
+    let filled = (progress * bar_width as f64) as usize;
+    let rest = bar_width.saturating_sub(filled);
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("{}  ", app.player.elapsed_str()), Style::default().fg(MUTED)),
+            Span::styled(
+                format!("{}  ", app.player.elapsed_str()),
+                Style::default().fg(MUTED),
+            ),
             Span::styled("━".repeat(filled), Style::default().fg(ACCENT)),
-            Span::styled("╌".repeat(rest),   Style::default().fg(DIM)),
+            Span::styled("╌".repeat(rest), Style::default().fg(DIM)),
             Span::styled(format!("  {duration_str}"), Style::default().fg(MUTED)),
         ])),
         inner[1],
@@ -443,16 +707,16 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(Line::from(vec![
             hint_key("Enter", s.hint_play),
             hint_key("Space", s.hint_pause),
-            hint_key("n/p",   s.hint_next_prev),
-            hint_key("←/→",   s.hint_seek),
-            hint_key("+/-",   s.hint_volume),
-            hint_key("Tab",   s.hint_view),
+            hint_key("n/p", s.hint_next_prev),
+            hint_key("←/→", s.hint_seek),
+            hint_key("+/-", s.hint_volume),
+            hint_key("Tab", s.hint_view),
             hint_key("1/2/3", s.hint_quality),
-            hint_key("q",     s.hint_quit),
-            hint_key("i",     s.hint_library),
-            hint_key("F",     s.hint_fav_tracks),
-            hint_key("A",     s.hint_fav_albums),
-            hint_key("`",     s.hint_lang),
+            hint_key("q", s.hint_quit),
+            hint_key("i", s.hint_library),
+            hint_key("F", s.hint_fav_tracks),
+            hint_key("A", s.hint_fav_albums),
+            hint_key("Alt+L", s.hint_lang),
         ])),
         inner[2],
     );
@@ -463,16 +727,22 @@ fn hint_key<'a>(key: &'a str, desc: &'a str) -> Span<'a> {
 }
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let (icon, color) = if app.loading { ("◌", GOLD) }
-        else if app.status_msg.starts_with("✓") || app.status_msg.starts_with("▶") { ("●", ACCENT) }
-        else if app.status_msg.starts_with("✗") { ("●", RED) }
-        else { ("○", MUTED) };
+    let (icon, color) = if app.loading {
+        ("◌", GOLD)
+    } else if app.status_msg.starts_with("✓") || app.status_msg.starts_with("▶") {
+        ("●", ACCENT)
+    } else if app.status_msg.starts_with("✗") {
+        ("●", RED)
+    } else {
+        ("○", MUTED)
+    };
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(format!(" {icon} "), Style::default().fg(color)),
             Span::styled(app.status_msg.as_str(), Style::default().fg(TEXT)),
-        ])).style(Style::default().bg(BG)),
+        ]))
+        .style(Style::default().bg(BG)),
         area,
     );
 }
@@ -482,30 +752,44 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Clear, popup);
 
     let user_code = app.user_code.as_deref().unwrap_or("...");
-    let auth_url  = app.auth_url.as_deref().unwrap_or("...");
+    let auth_url = app.auth_url.as_deref().unwrap_or("...");
     let s = app.lang.strings();
 
     f.render_widget(
         Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled(s.login_title_text, Style::default().fg(TEXT).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                s.login_title_text,
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            )),
             Line::from(""),
             Line::from(Span::styled(s.login_open_url, Style::default().fg(MUTED))),
-            Line::from(Span::styled(format!("     {auth_url}"), Style::default().fg(ACCENT))),
+            Line::from(Span::styled(
+                format!("     {auth_url}"),
+                Style::default().fg(ACCENT),
+            )),
             Line::from(""),
             Line::from(vec![
                 Span::styled(s.login_code_prefix, Style::default().fg(MUTED)),
-                Span::styled(user_code, Style::default().fg(GOLD).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    user_code,
+                    Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(""),
             Line::from(Span::styled(s.login_waiting, Style::default().fg(DIM))),
         ])
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Double)
-            .border_style(Style::default().fg(ACCENT))
-            .title(Span::styled(s.login_overlay_title, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)))
-            .style(Style::default().bg(BG2)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(ACCENT))
+                .title(Span::styled(
+                    s.login_overlay_title,
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ))
+                .style(Style::default().bg(BG2)),
+        )
         .wrap(Wrap { trim: false }),
         popup,
     );
@@ -522,27 +806,44 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
     let total = app.playlists.len() + app.mixes.len();
     if total == 0 {
         f.render_widget(
-            Paragraph::new(if app.loading { s.library_loading } else { s.library_hint })
+            Paragraph::new(if app.loading {
+                s.library_loading
+            } else {
+                s.library_hint
+            })
             .style(Style::default().fg(MUTED))
-            .block(Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(DIM))
-                .title(Span::styled(format!(" {} ", s.library_title), Style::default().fg(MUTED)))),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(DIM))
+                    .title(Span::styled(
+                        format!(" {} ", s.library_title),
+                        Style::default().fg(MUTED),
+                    )),
+            ),
             area,
         );
         return;
     }
 
-    let items: Vec<Row> = app.playlists.iter().enumerate()
+    let items: Vec<Row> = app
+        .playlists
+        .iter()
+        .enumerate()
         .map(|(i, p)| {
             let is_sel = i == app.library_selected;
             Row::new(vec![
                 Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
                 Cell::from(Span::styled(
                     truncate(&p.title, 40),
-                    Style::default().fg(if is_sel { ACCENT } else { TEXT })
-                        .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                    Style::default()
+                        .fg(if is_sel { ACCENT } else { TEXT })
+                        .add_modifier(if is_sel {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 )),
                 Cell::from(Span::styled(
                     app.lang.tracks_count(p.number_of_tracks),
@@ -550,17 +851,28 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                 )),
                 Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
             ])
-            .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
+            .style(Style::default().bg(if is_sel {
+                BG3
+            } else if i % 2 == 0 {
+                BG
+            } else {
+                BG2
+            }))
         })
         .chain(app.mixes.iter().enumerate().map(|(i, m)| {
-            let idx    = app.playlists.len() + i;
+            let idx = app.playlists.len() + i;
             let is_sel = idx == app.library_selected;
             Row::new(vec![
                 Cell::from(Span::styled("⊛ ", Style::default().fg(GOLD))),
                 Cell::from(Span::styled(
                     truncate(&m.title, 40),
-                    Style::default().fg(if is_sel { GOLD } else { TEXT })
-                        .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
+                    Style::default()
+                        .fg(if is_sel { GOLD } else { TEXT })
+                        .add_modifier(if is_sel {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 )),
                 Cell::from(Span::styled(
                     m.sub_title.as_deref().unwrap_or("").to_string(),
@@ -568,36 +880,58 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                 )),
                 Cell::from(Span::styled("Mix", Style::default().fg(GOLD))),
             ])
-            .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
+            .style(Style::default().bg(if is_sel {
+                BG3
+            } else if i % 2 == 0 {
+                BG
+            } else {
+                BG2
+            }))
         }))
         .collect();
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(Span::styled(s.col_name, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_info, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_type, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-    ]).style(Style::default().bg(BG2));
+        Cell::from(Span::styled(
+            s.col_name,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_info,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_type,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+    ])
+    .style(Style::default().bg(BG2));
 
     let mut state = ratatui::widgets::TableState::default();
     state.select(Some(app.library_selected));
 
     f.render_stateful_widget(
-        Table::new(items, [
-            Constraint::Length(3),
-            Constraint::Min(30),
-            Constraint::Length(20),
-            Constraint::Length(10),
-        ])
+        Table::new(
+            items,
+            [
+                Constraint::Length(3),
+                Constraint::Min(30),
+                Constraint::Length(20),
+                Constraint::Length(10),
+            ],
+        )
         .header(header)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM))
-            .title(Span::styled(
-                app.lang.library_title_with_counts(app.playlists.len(), app.mixes.len()),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            )))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM))
+                .title(Span::styled(
+                    app.lang
+                        .library_title_with_counts(app.playlists.len(), app.mixes.len()),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        )
         .row_highlight_style(Style::default().bg(BG3)),
         area,
         &mut state,
@@ -608,63 +942,105 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
     let s = app.lang.strings();
     if app.fav_albums.is_empty() {
         f.render_widget(
-            Paragraph::new(if app.loading { s.loading } else { s.fav_albums_empty })
-                .style(Style::default().fg(MUTED))
-                .block(Block::default()
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.fav_albums_empty
+            })
+            .style(Style::default().fg(MUTED))
+            .block(
+                Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(format!(" {} ", s.fav_albums_title), Style::default().fg(MUTED)))),
+                    .title(Span::styled(
+                        format!(" {} ", s.fav_albums_title),
+                        Style::default().fg(MUTED),
+                    )),
+            ),
             area,
         );
         return;
     }
 
-    let rows: Vec<Row> = app.fav_albums.iter().enumerate().map(|(i, a)| {
-        let is_sel = i == app.fav_album_selected;
-        Row::new(vec![
-            Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
-            Cell::from(Span::styled(
-                truncate(&a.title, 40),
-                Style::default()
-                    .fg(if is_sel { ACCENT } else { TEXT })
-                    .add_modifier(if is_sel { Modifier::BOLD } else { Modifier::empty() }),
-            )),
-            Cell::from(Span::styled(truncate(&a.artist_names(), 28), Style::default().fg(MUTED))),
-            Cell::from(Span::styled(
-                app.lang.tracks_count(a.number_of_tracks),
-                Style::default().fg(DIM),
-            )),
-        ])
-        .style(Style::default().bg(if is_sel { BG3 } else if i % 2 == 0 { BG } else { BG2 }))
-    }).collect();
+    let rows: Vec<Row> = app
+        .fav_albums
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let is_sel = i == app.fav_album_selected;
+            Row::new(vec![
+                Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
+                Cell::from(Span::styled(
+                    truncate(&a.title, 40),
+                    Style::default()
+                        .fg(if is_sel { ACCENT } else { TEXT })
+                        .add_modifier(if is_sel {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&a.artist_names(), 28),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    app.lang.tracks_count(a.number_of_tracks),
+                    Style::default().fg(DIM),
+                )),
+            ])
+            .style(Style::default().bg(if is_sel {
+                BG3
+            } else if i % 2 == 0 {
+                BG
+            } else {
+                BG2
+            }))
+        })
+        .collect();
 
     let header = Row::new(vec![
         Cell::from(""),
-        Cell::from(Span::styled(s.col_album,  Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_artist, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled(s.col_tracks, Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD))),
-    ]).style(Style::default().bg(BG2));
+        Cell::from(Span::styled(
+            s.col_album,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_artist,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            s.col_tracks,
+            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
+        )),
+    ])
+    .style(Style::default().bg(BG2));
 
     let mut state = ratatui::widgets::TableState::default();
     state.select(Some(app.fav_album_selected));
 
     f.render_stateful_widget(
-        Table::new(rows, [
-            Constraint::Length(3),
-            Constraint::Min(30),
-            Constraint::Length(28),
-            Constraint::Length(10),
-        ])
+        Table::new(
+            rows,
+            [
+                Constraint::Length(3),
+                Constraint::Min(30),
+                Constraint::Length(28),
+                Constraint::Length(10),
+            ],
+        )
         .header(header)
-        .block(Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(DIM))
-            .title(Span::styled(
-                app.lang.fav_albums_title_with_count(app.fav_albums.len()),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            )))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(DIM))
+                .title(Span::styled(
+                    app.lang.fav_albums_title_with_count(app.fav_albums.len()),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        )
         .row_highlight_style(Style::default().bg(BG3)),
         area,
         &mut state,
@@ -673,13 +1049,19 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
 
 fn truncate(s: &str, max: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max { s.to_string() }
-    else { format!("{}…", chars[..max.saturating_sub(1)].iter().collect::<String>()) }
+    if chars.len() <= max {
+        s.to_string()
+    } else {
+        format!(
+            "{}…",
+            chars[..max.saturating_sub(1)].iter().collect::<String>()
+        )
+    }
 }
 
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let popup_width = area.width * percent_x / 100;
-    let popup_x     = (area.width.saturating_sub(popup_width)) / 2;
-    let popup_y     = (area.height.saturating_sub(height)) / 2;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(height)) / 2;
     Rect::new(popup_x, popup_y, popup_width, height)
 }

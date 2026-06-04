@@ -287,6 +287,22 @@ def cmd_favorite_albums():
     except Exception as e:
         err(str(e))
 
+def cmd_lyrics(track_id: int):
+    session = make_session()
+    if not load_session(session):
+        err("No autenticado")
+        return
+    try:
+        track = session.track(track_id)
+        lyrics = track.lyrics()
+        out({
+            "trackId": track_id,
+            "lyrics": lyrics.text,
+            "subtitles": lyrics.subtitles,
+        })
+    except Exception as e:
+        err(str(e))
+
 def cmd_album_tracks(album_id: int):
     session = make_session()
     if not load_session(session):
@@ -335,6 +351,8 @@ if __name__ == "__main__":
             cmd_favorite_tracks()
         case ["fav_albums"]:
             cmd_favorite_albums()
+        case ["lyrics", track_id]:
+            cmd_lyrics(int(track_id))
         case ["album_tracks", album_id]:
             cmd_album_tracks(int(album_id))
         case _:

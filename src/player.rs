@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 const SOCKET_PATH: &str = "/tmp/tuidal-mpv.sock";
 
 pub struct Player {
-    process:    Option<Child>,
-    pub state:  PlayerState,
+    process: Option<Child>,
+    pub state: PlayerState,
     pub current: Option<TrackInfo>,
-    pub volume:  u8,
+    pub volume: u8,
     pub elapsed: Duration,
-    last_tick:   Option<Instant>,
+    last_tick: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,31 +24,31 @@ pub enum PlayerState {
 
 #[derive(Debug, Clone)]
 pub struct TrackInfo {
-    pub title:       String,
-    pub artist:      String,
-    pub album:       String,
-    pub duration:    u64,
-    pub bit_depth:   u32,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration: u64,
+    pub bit_depth: u32,
     pub sample_rate: u32,
-    pub codec:       String,
+    pub codec: String,
 }
 
 impl Player {
     pub fn new() -> Self {
         Self {
-            process:   None,
-            state:     PlayerState::Stopped,
-            current:   None,
-            volume:    85,
-            elapsed:   Duration::ZERO,
+            process: None,
+            state: PlayerState::Stopped,
+            current: None,
+            volume: 85,
+            elapsed: Duration::ZERO,
             last_tick: None,
         }
     }
 
     pub fn play(&mut self, url: &str, info: TrackInfo) {
         self.stop();
-        self.current   = Some(info);
-        self.elapsed   = Duration::ZERO;
+        self.current = Some(info);
+        self.elapsed = Duration::ZERO;
         self.last_tick = Some(Instant::now());
 
         // Eliminar socket anterior si quedó huérfano
@@ -74,7 +74,7 @@ impl Player {
         match child {
             Ok(c) => {
                 self.process = Some(c);
-                self.state   = PlayerState::Playing;
+                self.state = PlayerState::Playing;
             }
             Err(_) => {
                 // fallback: ffplay (no tiene IPC pero al menos reproduce)
@@ -86,7 +86,7 @@ impl Player {
                     .spawn();
                 if let Ok(c) = child2 {
                     self.process = Some(c);
-                    self.state   = PlayerState::Playing;
+                    self.state = PlayerState::Playing;
                 }
             }
         }
@@ -102,8 +102,8 @@ impl Player {
             let _ = child.wait();
         }
         let _ = std::fs::remove_file(SOCKET_PATH);
-        self.state     = PlayerState::Stopped;
-        self.elapsed   = Duration::ZERO;
+        self.state = PlayerState::Stopped;
+        self.elapsed = Duration::ZERO;
         self.last_tick = None;
     }
 
@@ -111,12 +111,12 @@ impl Player {
         match self.state {
             PlayerState::Playing => {
                 self.ipc_cmd(r#"{"command":["set_property","pause",true]}"#);
-                self.state     = PlayerState::Paused;
+                self.state = PlayerState::Paused;
                 self.last_tick = None;
             }
             PlayerState::Paused => {
                 self.ipc_cmd(r#"{"command":["set_property","pause",false]}"#);
-                self.state     = PlayerState::Playing;
+                self.state = PlayerState::Playing;
                 self.last_tick = Some(Instant::now());
             }
             PlayerState::Stopped => {}
@@ -171,22 +171,40 @@ impl Player {
     }
 
     pub fn tick(&mut self) {
-        if self.state == PlayerState::Playing {
-            if let Some(last) = self.last_tick {
-                self.elapsed += last.elapsed();
-                self.last_tick = Some(Instant::now());
-            }
-
-            // Verificar si el proceso terminó
-            if let Some(ref mut child) = self.process {
-                if let Ok(Some(_)) = child.try_wait() {
-                    self.process   = None;
-                    self.state     = PlayerState::Stopped;
-                    self.last_tick = None;
-                    let _ = std::fs::remove_file(SOCKET_PATH);
-                }
+        if let Some(ref mut child) = self.process {
+            if let Ok(Some(_)) = child.try_wait() {
+                self.process = None;
+                self.state = PlayerState::Stopped;
+                self.last_tick = None;
+                let _ = std::fs::remove_file(SOCKET_PATH);
             }
         }
+
+        if self.state == PlayerState::Playing {
+            if let Some(pos) = self.query_time_pos() {
+                self.elapsed = Duration::from_secs_f64(pos);
+            }
+            self.last_tick = Some(Instant::now());
+        }
+    }
+
+    fn query_time_pos(&self) -> Option<f64> {
+        let mut stream = UnixStream::connect(SOCKET_PATH).ok()?;
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
+        let cmd = b"{\"command\":[\"get_property\",\"time-pos\"]}\n";
+        let _ = stream.write_all(cmd);
+        let mut buf = [0u8; 512];
+        let n = stream.read(&mut buf).ok()?;
+        if n == 0 {
+            return Some(0.0);
+        }
+        let resp = std::str::from_utf8(&buf[..n]).ok()?;
+        let val: serde_json::Value = serde_json::from_str(resp).ok()?;
+        let data = val.get("data")?;
+        if data.is_null() {
+            return Some(0.0);
+        }
+        data.as_f64()
     }
 
     pub fn progress(&self) -> f64 {
