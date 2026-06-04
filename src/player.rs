@@ -161,6 +161,30 @@ impl Player {
         self.elapsed = self.elapsed.saturating_sub(Duration::from_secs(10));
     }
 
+    pub fn seek_relative(&mut self, secs: i64) {
+        self.ipc_cmd(&format!(r#"{{"command":["seek",{},"relative"]}}"#, secs));
+        if secs >= 0 {
+            self.elapsed = self
+                .elapsed
+                .saturating_add(Duration::from_secs(secs as u64));
+        } else {
+            self.elapsed = self
+                .elapsed
+                .saturating_sub(Duration::from_secs((-secs) as u64));
+        }
+        if let Some(info) = &self.current {
+            self.elapsed = self.elapsed.min(Duration::from_secs(info.duration));
+        }
+    }
+
+    pub fn seek_absolute(&mut self, secs: u64) {
+        self.ipc_cmd(&format!(r#"{{"command":["seek",{},"absolute"]}}"#, secs));
+        self.elapsed = Duration::from_secs(secs);
+        if let Some(info) = &self.current {
+            self.elapsed = self.elapsed.min(Duration::from_secs(info.duration));
+        }
+    }
+
     /// Envía un comando JSON al socket IPC de mpv (fire-and-forget)
     fn ipc_cmd(&self, json: &str) {
         if let Ok(mut stream) = UnixStream::connect(SOCKET_PATH) {

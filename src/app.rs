@@ -80,6 +80,9 @@ pub enum ApiCommand {
     PlayTrack(ApiTrack),
     ToggleShuffle,
     CycleRepeat,
+    Stop,
+    Seek(i64),
+    SetPosition(u64),
 }
 
 #[derive(Debug, Clone, DeserializeAttr)]
@@ -121,6 +124,7 @@ pub struct ApiStatus {
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub authenticated: bool,
+    pub track_id: Option<u64>,
     pub queue: Vec<Track>,
     pub queue_index: Option<usize>,
 }
@@ -419,6 +423,15 @@ impl App {
                             RepeatMode::Off => "off",
                         }
                     );
+                }
+                ApiCommand::Stop => {
+                    self.player.stop();
+                }
+                ApiCommand::Seek(secs) => {
+                    self.player.seek_relative(secs);
+                }
+                ApiCommand::SetPosition(secs) => {
+                    self.player.seek_absolute(secs);
                 }
                 ApiCommand::PlayTrack(api_track) => {
                     let track = Track {
@@ -912,6 +925,7 @@ impl App {
             bit_depth,
             sample_rate,
             codec,
+            track_id: self.current_track_id,
             shuffle: self.shuffle,
             repeat: self.repeat.clone(),
             authenticated: self.authenticated,

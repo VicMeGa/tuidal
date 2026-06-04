@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod i18n;
+mod mpris;
 mod player;
 mod tidal;
 mod ui;
@@ -48,11 +49,16 @@ async fn main() -> Result<()> {
 
     let api_status = Arc::new(RwLock::new(ApiStatus::default()));
     tokio::spawn(api::start_server(
-        event_tx,
+        event_tx.clone(),
         api_status.clone(),
         app.tidal.script_path.clone(),
         app.tidal.quality,
         app.tidal.python_path.clone(),
+    ));
+
+    tokio::spawn(mpris::start_mpris_server(
+        api_status.clone(),
+        event_tx.clone(),
     ));
 
     let result = run_app(&mut terminal, &mut app, event_rx, api_status).await;
