@@ -220,6 +220,7 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 app.play_selected_bg();
             }
         }
+        KeyCode::Char('a') => app.add_selected_to_queue(),
         KeyCode::Char(' ') => app.player.toggle_pause(),
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),

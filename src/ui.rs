@@ -706,6 +706,7 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(Line::from(vec![
             hint_key("Enter", s.hint_play),
+            hint_key("a", s.hint_add_queue),
             hint_key("Space", s.hint_pause),
             hint_key("n/p", s.hint_next_prev),
             hint_key("←/→", s.hint_seek),

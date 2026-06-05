@@ -486,6 +486,25 @@ impl App {
         });
     }
 
+    pub fn add_selected_to_queue(&mut self) {
+        if !self.authenticated {
+            self.status_msg = self.lang.strings().status_login_required_short.to_string();
+            return;
+        }
+        let track = match self.active_tab {
+            Tab::Search => self.search_results.get(self.selected).cloned(),
+            Tab::Queue => self.queue.get(self.selected).cloned(),
+            Tab::Now | Tab::Library => return,
+        };
+        let Some(track) = track else { return };
+        if self.queue.iter().any(|t| t.id == track.id) {
+            self.status_msg = self.lang.strings().status_added_to_queue.to_string();
+            return;
+        }
+        self.queue.push(track);
+        self.status_msg = self.lang.strings().status_added_to_queue.to_string();
+    }
+
     pub fn play_selected_bg(&mut self) {
         if !self.authenticated {
             self.status_msg = self.lang.strings().status_login_required_short.to_string();

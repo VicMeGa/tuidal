@@ -47,6 +47,7 @@ pub struct Strings {
     pub hint_fav_tracks: &'static str,
     pub hint_fav_albums: &'static str,
     pub hint_lang: &'static str,
+    pub hint_add_queue: &'static str,
     // Library
     pub library_loading: &'static str,
     pub library_hint: &'static str,
@@ -78,6 +79,7 @@ pub struct Strings {
     pub status_session_loading: &'static str,
     pub status_session_active: &'static str,
     pub status_press_l: &'static str,
+    pub status_added_to_queue: &'static str,
 }
 
 static ES: Strings = Strings {
@@ -113,6 +115,7 @@ static ES: Strings = Strings {
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav álbumes",
     hint_lang: "idioma",
+    hint_add_queue: "añadir cola",
     library_loading: "  ⟳ Cargando biblioteca...",
     library_hint: "  Presiona 'i' para cargar playlists y mixes",
     library_title: "Biblioteca",
@@ -140,6 +143,7 @@ static ES: Strings = Strings {
     status_session_loading: "Cargando sesión...",
     status_session_active: "✓ Sesión activa",
     status_press_l: "Presiona 'L' para iniciar sesión en Tidal",
+    status_added_to_queue: "▶ Añadido a la cola",
 };
 
 static EN: Strings = Strings {
@@ -175,6 +179,7 @@ static EN: Strings = Strings {
     hint_fav_tracks: "fav tracks",
     hint_fav_albums: "fav albums",
     hint_lang: "language",
+    hint_add_queue: "add queue",
     library_loading: "  ⟳ Loading library...",
     library_hint: "  Press 'i' to load playlists and mixes",
     library_title: "Library",
@@ -202,6 +207,7 @@ static EN: Strings = Strings {
     status_session_loading: "Loading session...",
     status_session_active: "✓ Session active",
     status_press_l: "Press 'L' to log in to Tidal",
+    status_added_to_queue: "▶ Added to queue",
 };
 
 static DE: Strings = Strings {
@@ -237,6 +243,7 @@ static DE: Strings = Strings {
     hint_fav_tracks: "Fav-Titel",
     hint_fav_albums: "Fav-Alben",
     hint_lang: "Sprache",
+    hint_add_queue: "hinzufügen",
     library_loading: "  ⟳ Bibliothek wird geladen...",
     library_hint: "  'i' drücken um Playlists und Mixes zu laden",
     library_title: "Bibliothek",
@@ -264,6 +271,7 @@ static DE: Strings = Strings {
     status_session_loading: "Sitzung wird geladen...",
     status_session_active: "✓ Sitzung aktiv",
     status_press_l: "'L' drücken um sich bei Tidal anzumelden",
+    status_added_to_queue: "▶ Zur Warteschlange hinzugefügt",
 };
 
 static RO: Strings = Strings {
@@ -299,6 +307,7 @@ static RO: Strings = Strings {
     hint_fav_tracks: "piese fav",
     hint_fav_albums: "albume fav",
     hint_lang: "limbă",
+    hint_add_queue: "adaugă coadă",
     library_loading: "  ⟳ Se încarcă biblioteca...",
     library_hint: "  Apasă 'i' pentru a încărca playlisturi și mixuri",
     library_title: "Bibliotecă",
@@ -326,6 +335,7 @@ static RO: Strings = Strings {
     status_session_loading: "Se încarcă sesiunea...",
     status_session_active: "✓ Sesiune activă",
     status_press_l: "Apasă 'L' pentru a te autentifica în Tidal",
+    status_added_to_queue: "▶ Adăugat în coadă",
 };
 
 impl Lang {
