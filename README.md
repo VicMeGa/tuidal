@@ -179,7 +179,6 @@ cargo run
 | `L` | Login to Tidal |
 | `Alt+L` | Cycle language (ES → EN → DE → RO) |
 | `q` | Quit |
-| `AltGr` + `\``| 2 times to Change language (español -> English -> Deutsch -> română) |
 
 ---
 
