@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::{ApiCommand, ApiStatus, ApiTrack, AppEvent};
-use crate::tidal::{FavAlbum, Mix, Playlist, Quality, TidalClient, Track};
+use crate::tidal::{FavAlbum, TidalDaemonClient, Track};
 
 pub const PORT: u16 = 7837;
 
@@ -18,48 +18,15 @@ pub const PORT: u16 = 7837;
 struct ApiState {
     tx: UnboundedSender<AppEvent>,
     status: Arc<RwLock<ApiStatus>>,
-    tidal_script: String,
-    tidal_quality: Quality,
-    tidal_python: String,
-}
-
-impl ApiState {
-    fn tidal(&self) -> TidalClient {
-        TidalClient::with_path_and_quality(
-            self.tidal_script.clone(),
-            self.tidal_quality,
-            self.tidal_python.clone(),
-        )
-    }
-}
-
-fn log(msg: &str) {
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/tuidal-api.log")
-    {
-        let _ = writeln!(f, "{}", msg);
-    }
+    tidal: Arc<TidalDaemonClient>,
 }
 
 pub async fn start_server(
     tx: UnboundedSender<AppEvent>,
     status: Arc<RwLock<ApiStatus>>,
-    tidal_script: String,
-    tidal_quality: Quality,
-    tidal_python: String,
+    tidal: Arc<TidalDaemonClient>,
 ) {
-    log("start_server: task started");
-    let state = ApiState {
-        tx,
-        status,
-        tidal_script,
-        tidal_quality,
-        tidal_python,
-    };
-    log("start_server: state created");
+    let state = ApiState { tx, status, tidal };
 
     let router = Router::new()
         .route("/status", get(handle_status))
@@ -76,39 +43,20 @@ pub async fn start_server(
         .route("/play-track", post(handle_play_track))
         .route("/just-play", post(handle_just_play))
         .route("/queue", get(handle_queue))
-        .route("/search", get(handle_search));
-    log("start_server: base routes registered");
-
-    let router = router
+        .route("/search", get(handle_search))
         .route("/library", get(handle_library))
         .route("/library/favorites", get(handle_library_favorites))
-        .route("/library/favorite-albums", get(handle_library_fav_albums));
-    log("start_server: library static routes registered");
-
-    let router = router
+        .route("/library/favorite-albums", get(handle_library_fav_albums))
         .route("/library/playlist/{uuid}", get(handle_library_playlist))
         .route("/library/mix/{id}", get(handle_library_mix))
-        .route("/library/album/{id}", get(handle_library_album));
-    log("start_server: library param routes registered");
+        .route("/library/album/{id}", get(handle_library_album))
+        .with_state(state);
 
-    let router = router.with_state(state);
-    log("start_server: with_state done");
-
-    log(&format!("start_server: binding 127.0.0.1:{PORT}"));
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await {
-        Ok(l) => {
-            log(&format!("start_server: bound OK on port {PORT}"));
-            l
-        }
-        Err(e) => {
-            log(&format!("start_server: bind FAILED: {e}"));
-            return;
-        }
+        Ok(l) => l,
+        Err(_) => return,
     };
-    log("start_server: calling axum::serve");
-    if let Err(e) = axum::serve(listener, router).await {
-        log(&format!("start_server: serve error: {e}"));
-    }
+    let _ = axum::serve(listener, router).await;
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -177,7 +125,7 @@ struct JustPlayQuery {
 }
 
 async fn handle_just_play(State(s): State<ApiState>, Query(p): Query<JustPlayQuery>) -> StatusCode {
-    match s.tidal().search(&p.q, 1).await {
+    match s.tidal.search(&p.q, 1).await {
         Ok(tracks) if !tracks.is_empty() => {
             let t = &tracks[0];
             let api_track = ApiTrack {
@@ -219,7 +167,7 @@ async fn handle_search(
     State(s): State<ApiState>,
     Query(p): Query<SearchQuery>,
 ) -> Result<Json<Vec<Track>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .search(&p.q, p.limit)
         .await
         .map(Json)
@@ -229,12 +177,13 @@ async fn handle_search(
 // ── Library ───────────────────────────────────────────────────────────────────
 
 async fn handle_library(State(s): State<ApiState>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let client = s.tidal();
-    let playlists = client
+    let playlists = s
+        .tidal
         .get_user_playlists()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mixes = client
+    let mixes = s
+        .tidal
         .get_user_mixes()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -246,7 +195,7 @@ async fn handle_library(State(s): State<ApiState>) -> Result<Json<serde_json::Va
 async fn handle_library_favorites(
     State(s): State<ApiState>,
 ) -> Result<Json<Vec<Track>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .get_favorite_tracks()
         .await
         .map(Json)
@@ -256,7 +205,7 @@ async fn handle_library_favorites(
 async fn handle_library_fav_albums(
     State(s): State<ApiState>,
 ) -> Result<Json<Vec<FavAlbum>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .get_favorite_albums()
         .await
         .map(Json)
@@ -267,7 +216,7 @@ async fn handle_library_playlist(
     State(s): State<ApiState>,
     Path(uuid): Path<String>,
 ) -> Result<Json<Vec<Track>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .get_playlist_tracks(&uuid)
         .await
         .map(Json)
@@ -278,7 +227,7 @@ async fn handle_library_mix(
     State(s): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Track>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .get_mix_tracks(&id)
         .await
         .map(Json)
@@ -289,15 +238,9 @@ async fn handle_library_album(
     State(s): State<ApiState>,
     Path(id): Path<u64>,
 ) -> Result<Json<Vec<Track>>, StatusCode> {
-    s.tidal()
+    s.tidal
         .get_album_tracks(id)
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
-
-// Suppress unused-import warnings for types used only in return positions
-const _: fn() = || {
-    let _: Playlist;
-    let _: Mix;
-};

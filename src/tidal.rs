@@ -1,8 +1,14 @@
 /// tidal.rs — Llama a tidal.py como subproceso y parsea el JSON que devuelve.
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::sync::oneshot;
 
 // ─── Calidades ────────────────────────────────────────────────────────────────
 
@@ -146,6 +152,7 @@ pub struct Mix {
 
 // ─── Respuestas internas ──────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct AuthStartResp {
     url: Option<String>,
@@ -153,6 +160,7 @@ struct AuthStartResp {
     error: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct AuthPollResp {
     authenticated: Option<bool>,
@@ -160,6 +168,7 @@ struct AuthPollResp {
     error: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct StreamResp {
     url: Option<String>,
@@ -169,6 +178,7 @@ struct StreamResp {
     error: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct CoverResp {
     url: Option<String>,
@@ -249,23 +259,28 @@ fn parse_lrc(lrc: &str) -> Vec<(u64, String)> {
 
 // ─── Cliente ──────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct TidalClient {
     pub quality: Quality,
     pub script_path: String,
     pub python_path: String,
 }
 
+#[allow(dead_code)]
 impl TidalClient {
-    pub fn new() -> Self {
-        let script_path = std::env::current_exe()
+    pub fn default_script_path() -> String {
+        std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("tidal.py")))
             .filter(|p| p.exists())
             .or_else(|| std::env::current_dir().ok().map(|d| d.join("tidal.py")))
             .filter(|p| p.exists())
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "tidal.py".to_string());
+            .unwrap_or_else(|| "tidal.py".to_string())
+    }
 
+    pub fn new() -> Self {
+        let script_path = Self::default_script_path();
         let python_path =
             std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
 
@@ -459,5 +474,288 @@ impl TidalClient {
         let tracks: Vec<Track> = serde_json::from_str(&stdout)
             .map_err(|e| anyhow!("JSON error: {e}\noutput: {stdout}"))?;
         Ok(tracks)
+    }
+}
+
+// ─── Cliente persistente (daemon) ─────────────────────────────────────────────
+
+type RpcResult = Result<serde_json::Value>;
+
+struct DaemonInner {
+    pending: tokio::sync::Mutex<HashMap<u64, oneshot::Sender<RpcResult>>>,
+    next_id: AtomicU64,
+}
+
+/// Cliente que mantiene un proceso Python persistente (--daemon).
+/// Se comunica via JSON-RPC sobre stdin/stdout.
+pub struct TidalDaemonClient {
+    stdin: tokio::sync::Mutex<tokio::io::BufWriter<tokio::process::ChildStdin>>,
+    inner: Arc<DaemonInner>,
+    process: std::sync::Mutex<Option<tokio::process::Child>>,
+    reader_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl TidalDaemonClient {
+    pub async fn spawn(script_path: &str, python_path: &str, quality: &str) -> Result<Arc<Self>> {
+        let mut child = tokio::process::Command::new(python_path)
+            .arg(script_path)
+            .arg("--daemon")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+
+        let stdin = child.stdin.take().ok_or_else(|| anyhow!("No stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
+
+        let inner = Arc::new(DaemonInner {
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+        });
+
+        let mut writer = tokio::io::BufWriter::new(stdin);
+        // Set initial quality
+        let init_req =
+            serde_json::json!({"id": 0, "method": "set_quality", "params": {"quality": quality}});
+        let mut line = serde_json::to_string(&init_req)?;
+        line.push('\n');
+        writer.write_all(line.as_bytes()).await?;
+        writer.flush().await?;
+
+        // Read quality response
+        let mut reader = tokio::io::BufReader::new(stdout);
+        let mut resp_line = String::new();
+        reader.read_line(&mut resp_line).await?;
+
+        let inner_clone = inner.clone();
+        let reader_handle = tokio::spawn(async move {
+            let mut reader = reader;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if let Some(id) = val.get("id").and_then(|v| v.as_u64()) {
+                                let mut pending = inner_clone.pending.lock().await;
+                                if let Some(tx) = pending.remove(&id) {
+                                    if let Some(error) = val.get("error") {
+                                        let msg = error.as_str().unwrap_or("error desconocido");
+                                        let _ = tx.send(Err(anyhow!("{}", msg)));
+                                    } else if let Some(result) = val.get("result") {
+                                        let _ = tx.send(Ok(result.clone()));
+                                    } else {
+                                        let _ = tx.send(Err(anyhow!("Respuesta inválida")));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let client = Arc::new(Self {
+            stdin: tokio::sync::Mutex::new(writer),
+            inner,
+            process: std::sync::Mutex::new(Some(child)),
+            reader_handle: std::sync::Mutex::new(Some(reader_handle)),
+        });
+
+        Ok(client)
+    }
+
+    pub async fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+
+        {
+            let mut pending = self.inner.pending.lock().await;
+            pending.insert(id, tx);
+        }
+
+        let req = serde_json::json!({"id": id, "method": method, "params": params});
+        let mut line = serde_json::to_string(&req)?;
+        line.push('\n');
+
+        {
+            let mut stdin = self.stdin.lock().await;
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await?;
+        }
+
+        match tokio::time::timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(anyhow!("Request cancelled")),
+            Err(_) => {
+                let mut pending = self.inner.pending.lock().await;
+                pending.remove(&id);
+                Err(anyhow!("Timeout tras 30s"))
+            }
+        }
+    }
+
+    pub async fn shutdown(&self) {
+        let _ = self.call("shutdown", serde_json::json!({})).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if let Ok(mut proc) = self.process.lock() {
+            if let Some(mut child) = proc.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    // ── Wrappers tipo-safe ──────────────────────────────────────────────────
+
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Track>> {
+        let v = self
+            .call(
+                "search",
+                serde_json::json!({"query": query, "limit": limit}),
+            )
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_stream_info(&self, track_id: u64, quality: &str) -> Result<StreamInfo> {
+        let v = self
+            .call(
+                "stream",
+                serde_json::json!({"track_id": track_id, "quality": quality}),
+            )
+            .await?;
+        let bd = v.get("bit_depth").and_then(|x| x.as_u64()).unwrap_or(16) as u32;
+        let sr = v
+            .get("sample_rate")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(44100) as u32;
+        Ok(StreamInfo {
+            url: v
+                .get("url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            codec: v
+                .get("codec")
+                .and_then(|x| x.as_str())
+                .unwrap_or("flac")
+                .to_string(),
+            bit_depth: bd,
+            sample_rate: sr,
+        })
+    }
+
+    pub async fn get_cover(&self, track_id: u64) -> Result<CoverInfo> {
+        let v = self
+            .call("cover", serde_json::json!({"track_id": track_id}))
+            .await?;
+        Ok(CoverInfo {
+            url: v
+                .get("url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+    }
+
+    pub async fn get_lyrics(&self, track_id: u64) -> Result<Lyrics> {
+        let v = self
+            .call("lyrics", serde_json::json!({"track_id": track_id}))
+            .await?;
+        let resp: LyricsResponse =
+            serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))?;
+        Ok(Lyrics::from_response(resp))
+    }
+
+    pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>> {
+        let v = self.call("playlists", serde_json::json!({})).await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_playlist_tracks(&self, uuid: &str) -> Result<Vec<Track>> {
+        let v = self
+            .call("playlist_tracks", serde_json::json!({"uuid": uuid}))
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_user_mixes(&self) -> Result<Vec<Mix>> {
+        let v = self.call("mixes", serde_json::json!({})).await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_mix_tracks(&self, mix_id: &str) -> Result<Vec<Track>> {
+        let v = self
+            .call("mix_tracks", serde_json::json!({"mix_id": mix_id}))
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_favorite_tracks(&self) -> Result<Vec<Track>> {
+        let v = self.call("fav_tracks", serde_json::json!({})).await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_favorite_albums(&self) -> Result<Vec<FavAlbum>> {
+        let v = self.call("fav_albums", serde_json::json!({})).await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn get_album_tracks(&self, album_id: u64) -> Result<Vec<Track>> {
+        let v = self
+            .call("album_tracks", serde_json::json!({"album_id": album_id}))
+            .await?;
+        serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
+    }
+
+    pub async fn start_device_auth(&self) -> Result<(String, String, String)> {
+        let v = self.call("auth_start", serde_json::json!({})).await?;
+        let url = v
+            .get("url")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let code = v
+            .get("code")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let device_code = v
+            .get("device_code")
+            .and_then(|x| x.as_str())
+            .unwrap_or("pending")
+            .to_string();
+        Ok((device_code, code, url))
+    }
+
+    pub async fn poll_device_token(&self) -> Result<bool> {
+        let v = self.call("auth_poll", serde_json::json!({})).await?;
+        Ok(v.get("authenticated")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false))
+    }
+
+    pub async fn set_quality(&self, quality: &str) -> Result<()> {
+        self.call("set_quality", serde_json::json!({"quality": quality}))
+            .await?;
+        Ok(())
+    }
+}
+
+impl Drop for TidalDaemonClient {
+    fn drop(&mut self) {
+        if let Ok(mut handle) = self.reader_handle.lock() {
+            if let Some(h) = handle.take() {
+                h.abort();
+            }
+        }
+        if let Ok(mut proc) = self.process.lock() {
+            if let Some(mut child) = proc.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
     }
 }

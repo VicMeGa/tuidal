@@ -1,14 +1,15 @@
 use crate::i18n::Lang;
 use crate::player::{Player, TrackInfo};
 use crate::tidal::{
-    Album, Artist, CoverInfo, FavAlbum, Lyrics, Mix, Playlist, Quality, StreamInfo, TidalClient,
-    Track,
+    Album, Artist, CoverInfo, FavAlbum, Lyrics, Mix, Playlist, Quality, StreamInfo,
+    TidalDaemonClient, Track,
 };
 use image::DynamicImage;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use serde::Deserialize as DeserializeAttr;
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,7 +131,7 @@ pub struct ApiStatus {
 }
 
 pub struct App {
-    pub tidal: TidalClient,
+    pub tidal: Arc<TidalDaemonClient>,
     pub player: Player,
     pub input_mode: InputMode,
     pub active_tab: Tab,
@@ -146,6 +147,7 @@ pub struct App {
     pub status_msg: String,
     pub loading: bool,
     pub auto_advance: bool,
+    pub should_quit: bool,
 
     pub device_code: Option<String>,
     pub user_code: Option<String>,
@@ -169,6 +171,7 @@ pub struct App {
     pub collection_view: CollectionView,
 
     pub lang: Lang,
+    pub quality: Quality,
     pub shuffle: bool,
     pub repeat: RepeatMode,
 
@@ -176,9 +179,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(tidal: Arc<TidalDaemonClient>) -> Self {
         Self {
-            tidal: TidalClient::new(),
+            tidal,
             player: Player::new(),
             input_mode: InputMode::Normal,
             active_tab: Tab::Search,
@@ -191,6 +194,7 @@ impl App {
             status_msg: String::new(),
             loading: false,
             auto_advance: false,
+            should_quit: false,
             device_code: None,
             user_code: None,
             auth_url: None,
@@ -209,6 +213,7 @@ impl App {
             fav_album_selected: 0,
             collection_view: CollectionView::Tracks,
             lang: Lang::Es,
+            quality: Quality::Lossless,
             shuffle: false,
             repeat: RepeatMode::All,
             lyrics: None,
@@ -464,6 +469,8 @@ impl App {
         }
     }
 
+    // ── Background tasks (simplificados — usan Arc<TidalDaemonClient>) ──────
+
     pub fn do_search_bg(&mut self) {
         if !self.authenticated {
             self.status_msg = self.lang.strings().status_login_required.to_string();
@@ -473,15 +480,12 @@ impl App {
             return;
         }
         self.loading = true;
-        self.status_msg = self.lang.searching(&self.search_input.clone());
+        self.status_msg = self.lang.searching(&self.search_input);
         let tx = self.tx();
         let query = self.search_input.clone();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            let result = client.search(&query, 20).await.map_err(|e| e.to_string());
+            let result = tidal.search(&query, 20).await.map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::SearchDone(result));
         });
     }
@@ -588,19 +592,17 @@ impl App {
         let generation = self.stream_generation;
         self.queue_index = Some(queue_index);
         self.loading = true;
-        self.status_msg = self.lang.loading_stream(&track.title.clone());
+        self.status_msg = self.lang.loading_stream(&track.title);
         self.cover_image = None;
         self.cover_info = None;
         self.cover_proto = None;
         self.lyrics = None;
         self.player.stop();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
+        let quality = self.quality.as_api_str().to_string();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_stream_info(track.id).await {
+            match tidal.get_stream_info(track.id, &quality).await {
                 Ok(info) => {
                     let _ = tx.send(AppEvent::StreamReady {
                         track,
@@ -621,12 +623,9 @@ impl App {
 
     fn load_lyrics_bg(&mut self, track_id: u64) {
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_lyrics(track_id).await {
+            match tidal.get_lyrics(track_id).await {
                 Ok(l) => {
                     let _ = tx.send(AppEvent::LyricsReady(l));
                 }
@@ -639,12 +638,9 @@ impl App {
 
     fn load_cover_bg(&mut self, track_id: u64) {
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            let cover_info = match client.get_cover(track_id).await {
+            let cover_info = match tidal.get_cover(track_id).await {
                 Ok(c) => c,
                 Err(_) => {
                     let _ = tx.send(AppEvent::CoverError);
@@ -682,12 +678,9 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_starting_login.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.start_device_auth().await {
+            match tidal.start_device_auth().await {
                 Ok((device_code, user_code, url)) => {
                     let _ = tx.send(AppEvent::AuthStarted {
                         url,
@@ -704,13 +697,9 @@ impl App {
 
     pub fn poll_auth_bg(&mut self) {
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let code = self.device_code.clone().unwrap_or_default();
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.poll_device_token(&code).await {
+            match tidal.poll_device_token().await {
                 Ok(true) => {
                     let _ = tx.send(AppEvent::AuthDone);
                 }
@@ -729,13 +718,10 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_lib.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            let playlists = client.get_user_playlists().await.unwrap_or_default();
-            let mixes = client.get_user_mixes().await.unwrap_or_default();
+            let playlists = tidal.get_user_playlists().await.unwrap_or_default();
+            let mixes = tidal.get_user_mixes().await.unwrap_or_default();
             let _ = tx.send(AppEvent::LibraryLoaded { playlists, mixes });
         });
     }
@@ -744,12 +730,9 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_playlist.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_playlist_tracks(&uuid).await {
+            match tidal.get_playlist_tracks(&uuid).await {
                 Ok(tracks) => {
                     let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks));
                 }
@@ -767,12 +750,9 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_mix.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_mix_tracks(&mix_id).await {
+            match tidal.get_mix_tracks(&mix_id).await {
                 Ok(tracks) => {
                     let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks));
                 }
@@ -787,7 +767,6 @@ impl App {
     }
 
     pub fn library_select_enter(&mut self) {
-        // Si esta   en vista de álbumes favoritos
         if self.collection_view == CollectionView::Albums {
             if let Some(album) = self.fav_albums.get(self.fav_album_selected) {
                 let id = album.id;
@@ -796,7 +775,6 @@ impl App {
             }
             return;
         }
-        // Vista normal: playlists y mixes
         let total_playlists = self.playlists.len();
         if self.library_selected < total_playlists {
             let uuid = self.playlists[self.library_selected].uuid.clone();
@@ -811,8 +789,13 @@ impl App {
     }
 
     pub fn set_quality(&mut self, q: Quality) {
-        self.tidal.quality = q;
+        self.quality = q;
         self.status_msg = self.lang.quality_changed(q.label());
+        let tidal = self.tidal.clone();
+        let label = q.as_api_str().to_string();
+        tokio::spawn(async move {
+            let _ = tidal.set_quality(&label).await;
+        });
         self.save_settings();
     }
 
@@ -822,7 +805,7 @@ impl App {
             Tab::Queue => Tab::Now,
             Tab::Now => Tab::Library,
             Tab::Library => {
-                self.collection_view = CollectionView::Tracks; // resetear al salir
+                self.collection_view = CollectionView::Tracks;
                 Tab::Search
             }
         };
@@ -863,12 +846,9 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_fav_tracks.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_favorite_tracks().await {
+            match tidal.get_favorite_tracks().await {
                 Ok(t) => {
                     let _ = tx.send(AppEvent::FavTracksLoaded(t));
                 }
@@ -889,12 +869,9 @@ impl App {
         self.loading = true;
         self.status_msg = self.lang.strings().status_loading_fav_albums.to_string();
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_favorite_albums().await {
+            match tidal.get_favorite_albums().await {
                 Ok(a) => {
                     let _ = tx.send(AppEvent::FavAlbumsLoaded(a));
                 }
@@ -955,14 +932,11 @@ impl App {
 
     pub fn load_album_tracks_bg(&mut self, album_id: u64, album_title: String) {
         self.loading = true;
-        self.status_msg = self.lang.loading_album(&album_title.clone());
+        self.status_msg = self.lang.loading_album(&album_title);
         let tx = self.tx();
-        let script = self.tidal.script_path.clone();
-        let quality = self.tidal.quality;
-        let python_path = self.tidal.python_path.clone();
+        let tidal = self.tidal.clone();
         tokio::spawn(async move {
-            let client = TidalClient::with_path_and_quality(script, quality, python_path.clone());
-            match client.get_album_tracks(album_id).await {
+            match tidal.get_album_tracks(album_id).await {
                 Ok(tracks) => {
                     let _ = tx.send(AppEvent::PlaylistTracksLoaded(tracks));
                 }
@@ -979,7 +953,7 @@ impl App {
     fn save_settings(&self) {
         let settings = Settings {
             lang: self.lang,
-            quality: self.tidal.quality,
+            quality: self.quality,
             volume: self.player.volume,
         };
         let path = settings_path();
@@ -996,7 +970,7 @@ impl App {
         if let Ok(json) = std::fs::read_to_string(&path) {
             if let Ok(settings) = serde_json::from_str::<Settings>(&json) {
                 self.lang = settings.lang;
-                self.tidal.quality = settings.quality;
+                self.quality = settings.quality;
                 self.player.volume = settings.volume.min(100);
             }
         }

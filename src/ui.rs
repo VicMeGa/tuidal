@@ -110,7 +110,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             ),
             auth_icon,
             Span::styled(
-                app.tidal.quality.label(),
+                app.quality.label(),
                 Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
             ),
         ]))

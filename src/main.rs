@@ -24,7 +24,6 @@ use tokio::time::interval;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Debe hacerse ANTES de enable_raw_mode y EnterAlternateScreen
     let picker = ratatui_image::picker::Picker::from_query_stdio().ok();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -32,12 +31,25 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    // Inicializar daemon persistente de Python
+    let script_path = tidal::TidalClient::default_script_path();
+    let python_path = std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
+    let tidal = tidal::TidalDaemonClient::spawn(&script_path, &python_path, "LOSSLESS")
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Error iniciando daemon Python: {e}");
+            std::process::exit(1);
+        });
+
+    let mut app = App::new(tidal.clone());
     app.picker = picker;
 
     app.load_settings();
+    // Sincronizar calidad local con el daemon
+    let _ = tidal.set_quality(app.quality.as_api_str()).await;
+
     app.status_msg = app.lang.strings().status_session_loading.to_string();
-    if app.tidal.load_session().await.is_ok() {
+    if tidal.poll_device_token().await.unwrap_or(false) {
         app.status_msg = app.lang.strings().status_session_active.to_string();
         app.authenticated = true;
     } else {
@@ -48,20 +60,23 @@ async fn main() -> Result<()> {
     app.event_tx = Some(event_tx.clone());
 
     let api_status = Arc::new(RwLock::new(ApiStatus::default()));
-    tokio::spawn(api::start_server(
+    let api_handle = tokio::spawn(api::start_server(
         event_tx.clone(),
         api_status.clone(),
-        app.tidal.script_path.clone(),
-        app.tidal.quality,
-        app.tidal.python_path.clone(),
+        tidal.clone(),
     ));
 
-    tokio::spawn(mpris::start_mpris_server(
+    let mpris_handle = tokio::spawn(mpris::start_mpris_server(
         api_status.clone(),
         event_tx.clone(),
     ));
 
     let result = run_app(&mut terminal, &mut app, event_rx, api_status).await;
+
+    // Graceful shutdown
+    tidal.shutdown().await;
+    api_handle.abort();
+    mpris_handle.abort();
 
     disable_raw_mode()?;
     execute!(
@@ -88,10 +103,13 @@ async fn run_app<B: ratatui::backend::Backend>(
     auth_tick.reset();
 
     loop {
+        if app.should_quit {
+            break;
+        }
+
         terminal.draw(|f| ui::draw(f, app))?;
 
         tokio::select! {
-            // Resultados de operaciones en background
             Some(event) = rx.recv() => {
                 app.handle_event(event);
             }
@@ -102,7 +120,6 @@ async fn run_app<B: ratatui::backend::Backend>(
                     *s = app.api_status_snapshot();
                 }
 
-                // Avance automático al siguiente track
                 if app.player.state == player::PlayerState::Stopped
                     && app.queue_index.is_some()
                     && !app.queue.is_empty()
@@ -118,7 +135,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                             && key.code == KeyCode::Char('c')
                         {
                             app.player.stop();
-                            return Ok(());
+                            app.should_quit = true;
+                            continue;
                         }
                         if key.code == KeyCode::Char('l') && key.modifiers == KeyModifiers::ALT
                         {
@@ -140,12 +158,14 @@ async fn run_app<B: ratatui::backend::Backend>(
             }
         }
     }
+    Ok(())
 }
+
 fn handle_normal(key: KeyCode, app: &mut App) {
     match key {
         KeyCode::Char('q') => {
             app.player.stop();
-            std::process::exit(0);
+            app.should_quit = true;
         }
         KeyCode::Char('/') | KeyCode::Char('s') => {
             app.input_mode = InputMode::Search;
