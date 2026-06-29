@@ -597,12 +597,10 @@ impl TidalDaemonClient {
     }
 
     pub async fn shutdown(&self) {
-        let _ = self.call("shutdown", serde_json::json!({})).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
         if let Ok(mut proc) = self.process.lock() {
             if let Some(mut child) = proc.take() {
                 let _ = child.kill();
-                let _ = child.wait();
+                // ponytail: no wait. child reaps on its own.
             }
         }
     }
@@ -754,7 +752,6 @@ impl Drop for TidalDaemonClient {
         if let Ok(mut proc) = self.process.lock() {
             if let Some(mut child) = proc.take() {
                 let _ = child.kill();
-                let _ = child.wait();
             }
         }
     }

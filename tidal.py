@@ -243,6 +243,7 @@ def run_daemon():
         params = req.get("params", {})
 
         if method == "shutdown":
+            out({"id": req_id, "result": {"ok": True}})
             break
 
         try:

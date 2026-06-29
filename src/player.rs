@@ -95,11 +95,10 @@ impl Player {
     pub fn stop(&mut self) {
         // Pedir a mpv que salga limpiamente antes de kill
         self.ipc_cmd(r#"{"command":["quit"]}"#);
-        std::thread::sleep(Duration::from_millis(50));
+        // ponytail: removed blocking thread::sleep.
 
         if let Some(mut child) = self.process.take() {
             let _ = child.kill();
-            let _ = child.wait();
         }
         let _ = std::fs::remove_file(SOCKET_PATH);
         self.state = PlayerState::Stopped;

@@ -22,8 +22,20 @@ use std::{
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+struct TerminalRestorer;
+
+impl Drop for TerminalRestorer {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(stdout, crossterm::cursor::Show);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _restorer = TerminalRestorer;
     let picker = ratatui_image::picker::Picker::from_query_stdio().ok();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -77,14 +89,6 @@ async fn main() -> Result<()> {
     tidal.shutdown().await;
     api_handle.abort();
     mpris_handle.abort();
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
 
     if let Err(e) = result {
         eprintln!("Error: {e}");
