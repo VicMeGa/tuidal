@@ -80,6 +80,7 @@ pub struct Strings {
     pub status_session_active: &'static str,
     pub status_press_l: &'static str,
     pub status_added_to_queue: &'static str,
+    pub status_already_in_queue: &'static str,
 }
 
 static ES: Strings = Strings {
@@ -144,6 +145,7 @@ static ES: Strings = Strings {
     status_session_active: "✓ Sesión activa",
     status_press_l: "Presiona 'L' para iniciar sesión en Tidal",
     status_added_to_queue: "▶ Añadido a la cola",
+    status_already_in_queue: "Ya está en la cola",
 };
 
 static EN: Strings = Strings {
@@ -208,6 +210,7 @@ static EN: Strings = Strings {
     status_session_active: "✓ Session active",
     status_press_l: "Press 'L' to log in to Tidal",
     status_added_to_queue: "▶ Added to queue",
+    status_already_in_queue: "Already in queue",
 };
 
 static DE: Strings = Strings {
@@ -272,6 +275,7 @@ static DE: Strings = Strings {
     status_session_active: "✓ Sitzung aktiv",
     status_press_l: "'L' drücken um sich bei Tidal anzumelden",
     status_added_to_queue: "▶ Zur Warteschlange hinzugefügt",
+    status_already_in_queue: "Bereits in der Warteschlange",
 };
 
 static RO: Strings = Strings {
@@ -336,6 +340,7 @@ static RO: Strings = Strings {
     status_session_active: "✓ Sesiune activă",
     status_press_l: "Apasă 'L' pentru a te autentifica în Tidal",
     status_added_to_queue: "▶ Adăugat în coadă",
+    status_already_in_queue: "Deja în coadă",
 };
 
 impl Lang {

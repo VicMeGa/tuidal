@@ -3,8 +3,10 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-// Ruta del socket IPC de mpv — única por proceso
-const SOCKET_PATH: &str = "/tmp/tuidal-mpv.sock";
+// ponytail: socket único por PID, evita colisión entre instancias
+fn socket_path() -> String {
+    format!("/tmp/tuidal-mpv-{}.sock", std::process::id())
+}
 
 pub struct Player {
     process: Option<Child>,
@@ -13,6 +15,7 @@ pub struct Player {
     pub volume: u8,
     pub elapsed: Duration,
     last_tick: Option<Instant>,
+    pos_skip: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +45,7 @@ impl Player {
             volume: 85,
             elapsed: Duration::ZERO,
             last_tick: None,
+            pos_skip: 0,
         }
     }
 
@@ -50,14 +54,15 @@ impl Player {
         self.current = Some(info);
         self.elapsed = Duration::ZERO;
         self.last_tick = Some(Instant::now());
+        self.pos_skip = 0;
 
         // Eliminar socket anterior si quedó huérfano
-        let _ = std::fs::remove_file(SOCKET_PATH);
+        let _ = std::fs::remove_file(socket_path());
 
         let mut mpv_args = vec![
             "--no-video".to_string(),
             "--really-quiet".to_string(),
-            format!("--input-ipc-server={SOCKET_PATH}"),
+            format!("--input-ipc-server={}", socket_path()),
             format!("--volume={}", self.volume),
         ];
         #[cfg(target_os = "linux")]
@@ -100,10 +105,11 @@ impl Player {
         if let Some(mut child) = self.process.take() {
             let _ = child.kill();
         }
-        let _ = std::fs::remove_file(SOCKET_PATH);
+        let _ = std::fs::remove_file(socket_path());
         self.state = PlayerState::Stopped;
         self.elapsed = Duration::ZERO;
         self.last_tick = None;
+        self.pos_skip = 0;
     }
 
     pub fn toggle_pause(&mut self) {
@@ -186,11 +192,14 @@ impl Player {
 
     /// Envía un comando JSON al socket IPC de mpv (fire-and-forget)
     fn ipc_cmd(&self, json: &str) {
-        if let Ok(mut stream) = UnixStream::connect(SOCKET_PATH) {
-            let msg = format!("{json}\n");
-            let _ = stream.write_all(msg.as_bytes());
+        let msg = format!("{json}\n");
+        for _ in 0..3 {
+            if let Ok(mut stream) = UnixStream::connect(socket_path()) {
+                let _ = stream.write_all(msg.as_bytes());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        // Si falla (socket no listo todavía) simplemente ignoramos
     }
 
     pub fn tick(&mut self) {
@@ -199,20 +208,30 @@ impl Player {
                 self.process = None;
                 self.state = PlayerState::Stopped;
                 self.last_tick = None;
-                let _ = std::fs::remove_file(SOCKET_PATH);
+                self.pos_skip = 0;
+                let _ = std::fs::remove_file(socket_path());
             }
         }
 
         if self.state == PlayerState::Playing {
-            if let Some(pos) = self.query_time_pos() {
-                self.elapsed = Duration::from_secs_f64(pos);
+            self.pos_skip += 1;
+            // ponytail: query mpv every ~1s (20 ticks at 50ms) instead of every tick
+            if self.pos_skip % 20 == 0 {
+                if let Some(pos) = self.query_time_pos() {
+                    self.elapsed = Duration::from_secs_f64(pos);
+                }
+            } else if let Some(last) = self.last_tick {
+                self.elapsed += Instant::now().duration_since(last);
+                if let Some(info) = &self.current {
+                    self.elapsed = self.elapsed.min(Duration::from_secs(info.duration));
+                }
             }
             self.last_tick = Some(Instant::now());
         }
     }
 
     fn query_time_pos(&self) -> Option<f64> {
-        let mut stream = UnixStream::connect(SOCKET_PATH).ok()?;
+        let mut stream = UnixStream::connect(socket_path()).ok()?;
         let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
         let cmd = b"{\"command\":[\"get_property\",\"time-pos\"]}\n";
         let _ = stream.write_all(cmd);
@@ -242,5 +261,64 @@ impl Player {
     pub fn elapsed_str(&self) -> String {
         let s = self.elapsed.as_secs();
         format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_elapsed_str_zero() {
+        let p = Player::new();
+        assert_eq!(p.elapsed_str(), "0:00");
+    }
+
+    #[test]
+    fn test_elapsed_str_format() {
+        let mut p = Player::new();
+        p.elapsed = Duration::from_secs(65);
+        assert_eq!(p.elapsed_str(), "1:05");
+        p.elapsed = Duration::from_secs(3661);
+        assert_eq!(p.elapsed_str(), "61:01");
+    }
+
+    #[test]
+    fn test_progress_no_track() {
+        let p = Player::new();
+        assert_eq!(p.progress(), 0.0);
+    }
+
+    #[test]
+    fn test_progress_with_track() {
+        let mut p = Player::new();
+        p.current = Some(TrackInfo {
+            title: "Test".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            duration: 200,
+            bit_depth: 16,
+            sample_rate: 44100,
+            codec: "flac".into(),
+        });
+        p.elapsed = Duration::from_secs(50);
+        let prog = p.progress();
+        assert!((prog - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_progress_clamped() {
+        let mut p = Player::new();
+        p.current = Some(TrackInfo {
+            title: "Test".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            duration: 100,
+            bit_depth: 16,
+            sample_rate: 44100,
+            codec: "flac".into(),
+        });
+        p.elapsed = Duration::from_secs(999);
+        assert!((p.progress() - 1.0).abs() < 0.001);
     }
 }

@@ -197,7 +197,7 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
         f,
         app,
         chunks[1],
-        &app.search_results.clone(),
+        &app.search_results,
         app.selected,
         app.lang.strings().search_results_title,
     );
@@ -208,7 +208,7 @@ fn draw_queue_tab(f: &mut Frame, app: &App, area: Rect) {
         f,
         app,
         area,
-        &app.queue.clone(),
+        &app.queue,
         app.selected,
         app.lang.strings().queue_title,
     );

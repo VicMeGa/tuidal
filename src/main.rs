@@ -3,6 +3,8 @@ mod app;
 mod i18n;
 mod mpris;
 mod player;
+mod settings;
+mod tasks;
 mod tidal;
 mod ui;
 
@@ -44,7 +46,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Inicializar daemon persistente de Python
-    let script_path = tidal::TidalClient::default_script_path();
+    let script_path = tidal::TidalDaemonClient::default_script_path();
     let python_path = std::env::var("TUIDAL_PYTHON_PATH").unwrap_or_else(|_| "python3".to_string());
     let tidal = tidal::TidalDaemonClient::spawn(&script_path, &python_path, "LOSSLESS")
         .await
@@ -104,6 +106,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     let mut ui_tick = interval(Duration::from_millis(50));
     let mut auth_tick = interval(Duration::from_secs(5));
+    let mut status_skip = 0u32;
     auth_tick.reset();
 
     loop {
@@ -120,8 +123,12 @@ async fn run_app<B: ratatui::backend::Backend>(
 
             _ = ui_tick.tick() => {
                 app.player.tick();
-                if let Ok(mut s) = api_status.write() {
-                    *s = app.api_status_snapshot();
+                // ponytail: snapshot status every 500ms instead of every 50ms
+                status_skip += 1;
+                if status_skip % 10 == 0 {
+                    if let Ok(mut s) = api_status.write() {
+                        *s = app.api_status_snapshot();
+                    }
                 }
 
                 if app.player.state == player::PlayerState::Stopped

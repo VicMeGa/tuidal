@@ -15,7 +15,7 @@ struct Shared {
 
 // ── org.mpris.MediaPlayer2 (root interface) ─────────────────────────────────
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "used by zbus internally")]
 struct MprisRoot(Shared);
 
 #[zbus::interface(name = "org.mpris.MediaPlayer2")]
