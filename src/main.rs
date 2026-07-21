@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod i18n;
+mod library;
 mod mpris;
 mod player;
 mod settings;
@@ -15,6 +16,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use library::{LibraryFocus, LibrarySection};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::{
     io,
@@ -182,37 +184,58 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             app.input_mode = InputMode::Search;
             app.search_input.clear();
         }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
+        KeyCode::Char('L') => {
             if !app.authenticated {
                 app.start_login_bg();
             }
         }
         KeyCode::Char('i') => {
             if app.authenticated {
-                app.load_library_bg();
+                app.active_tab = Tab::Library;
+                app.library.viewing = None;
+                app.ensure_section_loaded();
             }
         }
         KeyCode::Char('F') => {
             if app.authenticated {
-                app.load_fav_tracks_bg();
+                app.active_tab = Tab::Library;
+                app.library.focus = LibraryFocus::Content;
+                app.library.active_section = LibrarySection::FavTracks;
+                app.library.viewing = None;
+                app.ensure_section_loaded();
             }
         }
         KeyCode::Char('A') => {
-            if app.authenticated {
-                app.load_fav_albums_bg();
+            if app.active_tab == Tab::Library
+                && app.library.focus == LibraryFocus::Content
+                && (app.library.viewing.is_some()
+                    || app.library.active_section == LibrarySection::FavTracks)
+            {
+                app.add_all_tracks_to_queue();
+            } else if app.authenticated {
+                app.active_tab = Tab::Library;
+                app.library.focus = LibraryFocus::Content;
+                app.library.active_section = LibrarySection::FavAlbums;
+                app.library.viewing = None;
+                app.ensure_section_loaded();
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if app.active_tab == Tab::Library {
-                if app.collection_view == app::CollectionView::Albums {
-                    let max = app.fav_albums.len();
+                if let Some(ref mut viewing) = app.library.viewing {
+                    let max = viewing.tracks.len();
                     if max > 0 {
-                        app.fav_album_selected = (app.fav_album_selected + 1) % max;
+                        viewing.cursor = (viewing.cursor + 1) % max;
                     }
+                } else if app.library.focus == LibraryFocus::Sidebar {
+                    app.library.active_section = app.library.active_section.next();
+                    app.ensure_section_loaded();
                 } else {
-                    let max = app.playlists.len() + app.mixes.len();
+                    let section = app.library.active_section;
+                    let max = app.section_len(section);
                     if max > 0 {
-                        app.library_selected = (app.library_selected + 1) % max;
+                        let cur = app.library.cursor[section as usize];
+                        app.library.cursor[section as usize] = (cur + 1) % max;
                     }
                 }
             } else {
@@ -221,23 +244,25 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if app.active_tab == Tab::Library {
-                if app.collection_view == app::CollectionView::Albums {
-                    let max = app.fav_albums.len();
+                if let Some(ref mut viewing) = app.library.viewing {
+                    let max = viewing.tracks.len();
                     if max > 0 {
-                        app.fav_album_selected = if app.fav_album_selected == 0 {
+                        viewing.cursor = if viewing.cursor == 0 {
                             max - 1
                         } else {
-                            app.fav_album_selected - 1
+                            viewing.cursor - 1
                         };
                     }
+                } else if app.library.focus == LibraryFocus::Sidebar {
+                    app.library.active_section = app.library.active_section.prev();
+                    app.ensure_section_loaded();
                 } else {
-                    let max = app.playlists.len() + app.mixes.len();
+                    let section = app.library.active_section;
+                    let max = app.section_len(section);
                     if max > 0 {
-                        app.library_selected = if app.library_selected == 0 {
-                            max - 1
-                        } else {
-                            app.library_selected - 1
-                        };
+                        let cur = app.library.cursor[section as usize];
+                        app.library.cursor[section as usize] =
+                            if cur == 0 { max - 1 } else { cur - 1 };
                     }
                 }
             } else {
@@ -246,17 +271,59 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         }
         KeyCode::Enter => {
             if app.active_tab == Tab::Library {
-                app.library_select_enter();
+                if app.library.focus == LibraryFocus::Sidebar {
+                    app.library.focus = LibraryFocus::Content;
+                }
+                if app.library.viewing.is_some() {
+                    app.play_drilldown_track();
+                } else if app.library.active_section == LibrarySection::FavTracks {
+                    app.play_fav_track();
+                } else {
+                    app.library_select_enter();
+                }
             } else {
                 app.play_selected_bg();
             }
         }
-        KeyCode::Char('a') => app.add_selected_to_queue(),
+        KeyCode::Char('a') => {
+            if app.active_tab == Tab::Library
+                && app.library.focus == LibraryFocus::Content
+                && (app.library.viewing.is_some()
+                    || app.library.active_section == LibrarySection::FavTracks)
+            {
+                app.add_current_track_to_queue();
+            } else {
+                app.add_selected_to_queue();
+            }
+        }
         KeyCode::Char(' ') => app.player.toggle_pause(),
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),
-        KeyCode::Right => app.player.seek_forward(),
-        KeyCode::Left => app.player.seek_backward(),
+        KeyCode::Right | KeyCode::Char('l') => {
+            if app.active_tab == Tab::Library {
+                if app.library.focus == LibraryFocus::Sidebar {
+                    app.library.focus = LibraryFocus::Content;
+                }
+            } else {
+                app.player.seek_forward();
+            }
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if app.active_tab == Tab::Library {
+                if app.library.viewing.is_some() {
+                    app.library.viewing = None;
+                } else {
+                    app.library.focus = LibraryFocus::Sidebar;
+                }
+            } else {
+                app.player.seek_backward();
+            }
+        }
+        KeyCode::Esc => {
+            if app.active_tab == Tab::Library && app.library.viewing.is_some() {
+                app.library.viewing = None;
+            }
+        }
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_up(),
         KeyCode::Char('-') => app.volume_down(),
         KeyCode::Tab => app.next_tab(),

@@ -165,14 +165,19 @@ cargo run
 | Key | Action |
 |-----|--------|
 | `/` or `s` | Search |
-| `Enter` | Play selected |
+| `Enter` | Play selected / drill-down into playlist/mix/album |
 | `Space` | Pause / Resume |
 | `n` / `p` | Next / Previous track |
 | `←` / `→` | Seek backward / forward |
 | `+` / `-` | Volume up / down |
 | `Tab` | Cycle tabs (Search → Queue → Now → Library) |
-| `i` | Load library (on Library tab) |
-| `j` / `k` or `↓` / `↑` | Navigate list |
+| `i` | Open Library (last section) |
+| `F` | Open Library → Favorite Tracks |
+| `A` | Open Library → Favorite Albums (add-all in Library) |
+| `j` / `k` or `↓` / `↑` | Navigate list / change section (sidebar) |
+| `h` / `l` or `←` / `→` | Focus sidebar / content (in Library) |
+| `Esc` | Back from drill-down view |
+| `a` | Add track to queue (in drill-down / FavTracks) |
 | `1` | Quality: HiRes FLAC 24bit |
 | `2` | Quality: FLAC 16bit/44.1kHz |
 | `3` | Quality: AAC 320kbps |

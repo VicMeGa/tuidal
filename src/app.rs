@@ -1,4 +1,5 @@
 use crate::i18n::Lang;
+use crate::library::{LibraryFocus, LibrarySection, LibraryState, LibraryViewing};
 use crate::player::{Player, TrackInfo};
 use crate::settings::Settings;
 use crate::tasks;
@@ -26,12 +27,6 @@ pub enum Tab {
     Queue,
     Now,
     Library,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum CollectionView {
-    Tracks,
-    Albums,
 }
 
 pub enum AppEvent {
@@ -165,12 +160,7 @@ pub struct App {
     pub current_track_id: Option<u64>,
     pub stream_generation: u64,
 
-    pub playlists: Vec<Playlist>,
-    pub mixes: Vec<Mix>,
-    pub library_selected: usize,
-    pub fav_albums: Vec<FavAlbum>,
-    pub fav_album_selected: usize,
-    pub collection_view: CollectionView,
+    pub library: LibraryState,
 
     pub lang: Lang,
     pub quality: Quality,
@@ -208,12 +198,8 @@ impl App {
             last_img_area: None,
             current_track_id: None,
             stream_generation: 0,
-            playlists: Vec::new(),
-            mixes: Vec::new(),
-            library_selected: 0,
-            fav_albums: Vec::new(),
-            fav_album_selected: 0,
-            collection_view: CollectionView::Tracks,
+            library: LibraryState::new(),
+
             lang: Lang::Es,
             quality: Quality::Lossless,
             shuffle: false,
@@ -351,37 +337,39 @@ impl App {
                 self.lyrics = None;
             }
             AppEvent::LibraryLoaded { playlists, mixes } => {
-                self.playlists = playlists;
-                self.mixes = mixes;
+                self.library.playlists = Some(playlists);
+                self.library.mixes = Some(mixes);
                 self.active_tab = Tab::Library;
                 self.loading = false;
-                self.status_msg = self
-                    .lang
-                    .library_loaded(self.playlists.len(), self.mixes.len());
+                let plen = self.library.playlists.as_ref().map_or(0, |p| p.len());
+                let mlen = self.library.mixes.as_ref().map_or(0, |m| m.len());
+                self.status_msg = self.lang.library_loaded(plen, mlen);
             }
             AppEvent::PlaylistTracksLoaded(tracks) => {
-                self.queue = tracks;
-                self.queue_index = None;
-                self.selected = 0;
-                self.active_tab = Tab::Queue;
+                let n = tracks.len();
+                let title = std::mem::take(&mut self.library.pending_viewing_title);
+                self.library.viewing = Some(LibraryViewing {
+                    title,
+                    tracks,
+                    cursor: 0,
+                });
                 self.loading = false;
-                self.status_msg = self.lang.tracks_loaded(self.queue.len());
+                self.status_msg = self.lang.tracks_loaded(n);
             }
             AppEvent::FavTracksLoaded(tracks) => {
-                self.queue = tracks;
-                self.queue_index = None;
-                self.selected = 0;
-                self.active_tab = Tab::Queue;
+                let n = tracks.len();
+                self.library.fav_tracks = Some(tracks);
                 self.loading = false;
-                self.status_msg = self.lang.fav_tracks_loaded(self.queue.len());
+                self.status_msg = self.lang.fav_tracks_loaded(n);
             }
             AppEvent::FavAlbumsLoaded(albums) => {
-                self.fav_albums = albums;
-                self.fav_album_selected = 0;
-                self.collection_view = CollectionView::Albums;
+                self.library.fav_albums = Some(albums);
+                self.library.cursor[LibrarySection::FavAlbums as usize] = 0;
+                self.library.active_section = LibrarySection::FavAlbums;
                 self.active_tab = Tab::Library;
                 self.loading = false;
-                self.status_msg = self.lang.fav_albums_loaded(self.fav_albums.len());
+                let count = self.library.fav_albums.as_ref().map_or(0, |a| a.len());
+                self.status_msg = self.lang.fav_albums_loaded(count);
             }
             AppEvent::ApiCmd(cmd) => match cmd {
                 ApiCommand::PlayPause => {
@@ -645,25 +633,107 @@ impl App {
     }
 
     pub fn library_select_enter(&mut self) {
-        if self.collection_view == CollectionView::Albums {
-            if let Some(album) = self.fav_albums.get(self.fav_album_selected) {
-                let id = album.id;
-                let title = album.title.clone();
-                self.load_album_tracks_bg(id, title);
+        match self.library.active_section {
+            LibrarySection::Playlists => {
+                let cursor = self.library.cursor[LibrarySection::Playlists as usize];
+                if let Some(playlists) = &self.library.playlists {
+                    if let Some(p) = playlists.get(cursor) {
+                        self.library.pending_viewing_title = p.title.clone();
+                        self.load_playlist_tracks_bg(p.uuid.clone());
+                    }
+                }
             }
+            LibrarySection::Mixes => {
+                let cursor = self.library.cursor[LibrarySection::Mixes as usize];
+                if let Some(mixes) = &self.library.mixes {
+                    if let Some(m) = mixes.get(cursor) {
+                        self.library.pending_viewing_title = m.title.clone();
+                        self.load_mix_tracks_bg(m.id.clone());
+                    }
+                }
+            }
+            LibrarySection::FavTracks => {
+                // ponytail: Enter on individual track handled by play_fav_track
+            }
+            LibrarySection::FavAlbums => {
+                let cursor = self.library.cursor[LibrarySection::FavAlbums as usize];
+                if let Some(albums) = &self.library.fav_albums {
+                    if let Some(a) = albums.get(cursor) {
+                        self.library.pending_viewing_title = a.title.clone();
+                        self.load_album_tracks_bg(a.id, a.title.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn play_drilldown_track(&mut self) {
+        let (track, remaining) = match self.library.viewing.as_ref() {
+            Some(v) => match v.tracks.get(v.cursor) {
+                Some(t) => (t.clone(), v.tracks[v.cursor..].to_vec()),
+                None => return,
+            },
+            None => return,
+        };
+        self.queue = remaining;
+        self.stream_track_bg(track, 0);
+    }
+
+    pub fn play_fav_track(&mut self) {
+        let cursor = self.library.cursor[LibrarySection::FavTracks as usize];
+        let (track, remaining) = match self.library.fav_tracks.as_ref() {
+            Some(tracks) => match tracks.get(cursor) {
+                Some(t) => (t.clone(), tracks[cursor..].to_vec()),
+                None => return,
+            },
+            None => return,
+        };
+        self.queue = remaining;
+        self.stream_track_bg(track, 0);
+    }
+
+    pub fn add_current_track_to_queue(&mut self) {
+        let track = if let Some(ref viewing) = self.library.viewing {
+            match viewing.tracks.get(viewing.cursor) {
+                Some(t) => t.clone(),
+                None => return,
+            }
+        } else if self.library.active_section == LibrarySection::FavTracks {
+            let cursor = self.library.cursor[LibrarySection::FavTracks as usize];
+            match self.library.fav_tracks.as_ref().and_then(|t| t.get(cursor)) {
+                Some(t) => t.clone(),
+                None => return,
+            }
+        } else {
+            return;
+        };
+        if self.queue.iter().any(|t| t.id == track.id) {
+            self.status_msg = self.lang.strings().status_already_in_queue.to_string();
             return;
         }
-        let total_playlists = self.playlists.len();
-        if self.library_selected < total_playlists {
-            let uuid = self.playlists[self.library_selected].uuid.clone();
-            self.load_playlist_tracks_bg(uuid);
+        self.queue.push(track.clone());
+        self.status_msg = format!("▶ Añadida: {}", track.title);
+    }
+
+    pub fn add_all_tracks_to_queue(&mut self) {
+        let tracks: Vec<Track> = if let Some(ref viewing) = self.library.viewing {
+            viewing.tracks.clone()
+        } else if self.library.active_section == LibrarySection::FavTracks {
+            match self.library.fav_tracks.as_ref() {
+                Some(t) => t.clone(),
+                None => return,
+            }
         } else {
-            let mix_idx = self.library_selected - total_playlists;
-            if let Some(mix) = self.mixes.get(mix_idx) {
-                let mix_id = mix.id.clone();
-                self.load_mix_tracks_bg(mix_id);
+            return;
+        };
+        let mut added = 0usize;
+        for track in &tracks {
+            if !self.queue.iter().any(|t| t.id == track.id) {
+                self.queue.push(track.clone());
+                added += 1;
             }
         }
+        self.status_msg = format!("▶ {added} canciones añadidas a la cola");
     }
 
     pub fn set_quality(&mut self, q: Quality) {
@@ -674,15 +744,20 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
+        let entering_library = self.active_tab == Tab::Now;
         self.active_tab = match self.active_tab {
             Tab::Search => Tab::Queue,
             Tab::Queue => Tab::Now,
             Tab::Now => Tab::Library,
             Tab::Library => {
-                self.collection_view = CollectionView::Tracks;
+                self.library.active_section = LibrarySection::Playlists;
+                self.library.focus = LibraryFocus::Sidebar;
                 Tab::Search
             }
         };
+        if entering_library {
+            self.ensure_section_loaded();
+        }
         self.selected = 0;
     }
 
@@ -691,7 +766,36 @@ impl App {
             Tab::Search => self.search_results.len(),
             Tab::Queue => self.queue.len(),
             Tab::Now => 0,
-            Tab::Library => self.playlists.len() + self.mixes.len(),
+            Tab::Library => self.section_len(self.library.active_section),
+        }
+    }
+
+    pub fn section_len(&self, section: LibrarySection) -> usize {
+        match section {
+            LibrarySection::Playlists => self.library.playlists.as_ref().map_or(0, |p| p.len()),
+            LibrarySection::Mixes => self.library.mixes.as_ref().map_or(0, |m| m.len()),
+            LibrarySection::FavTracks => self.library.fav_tracks.as_ref().map_or(0, |t| t.len()),
+            LibrarySection::FavAlbums => self.library.fav_albums.as_ref().map_or(0, |a| a.len()),
+        }
+    }
+
+    pub fn ensure_section_loaded(&mut self) {
+        match self.library.active_section {
+            LibrarySection::Playlists | LibrarySection::Mixes => {
+                if self.library.playlists.is_none() && self.library.mixes.is_none() {
+                    self.load_library_bg();
+                }
+            }
+            LibrarySection::FavTracks => {
+                if self.library.fav_tracks.is_none() {
+                    self.load_fav_tracks_bg();
+                }
+            }
+            LibrarySection::FavAlbums => {
+                if self.library.fav_albums.is_none() {
+                    self.load_fav_albums_bg();
+                }
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 //use crate::app::{App, InputMode, Tab};
-use crate::app::{App, CollectionView, InputMode, Tab};
+use crate::app::{App, InputMode, Tab};
+use crate::library::{LibraryFocus, LibrarySection, LibraryViewing};
 use crate::player::PlayerState;
 use ratatui::{
     Frame,
@@ -797,54 +798,145 @@ fn draw_login_overlay(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
-    // Si estamos en vista de álbumes favoritos
-    //if app.collection_view == app::CollectionView::Albums {
-    if app.collection_view == CollectionView::Albums {
-        draw_fav_albums(f, app, area);
+    let sidebar_border = if app.library.focus == LibraryFocus::Sidebar {
+        ACCENT
+    } else {
+        DIM
+    };
+    let content_border = if app.library.focus == LibraryFocus::Content {
+        ACCENT
+    } else {
+        DIM
+    };
+    let sidebar_w = (area.width * 20 / 100).max(16);
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(sidebar_w), Constraint::Min(0)])
+        .split(area);
+
+    draw_library_sidebar(f, app, chunks[0], sidebar_border);
+    draw_library_content(f, app, chunks[1], content_border);
+}
+
+fn draw_library_sidebar(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let sections = [
+        (LibrarySection::Playlists, s.lib_playlists),
+        (LibrarySection::Mixes, s.lib_mixes),
+        (LibrarySection::FavTracks, s.lib_fav_tracks),
+        (LibrarySection::FavAlbums, s.lib_fav_albums),
+    ];
+
+    let items: Vec<Line> = sections
+        .iter()
+        .map(|(sec, label)| {
+            let is_active = *sec == app.library.active_section;
+            let count = app.section_len(*sec);
+            let icon = match sec {
+                LibrarySection::Playlists => "≡",
+                LibrarySection::Mixes => "⊛",
+                LibrarySection::FavTracks => "♥",
+                LibrarySection::FavAlbums => "◆",
+            };
+            let fg = if is_active { ACCENT } else { MUTED };
+            let style = if is_active {
+                Style::default()
+                    .fg(BG)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
+                Span::styled(format!("{label}"), style),
+                Span::styled(
+                    format!(" ({count})"),
+                    Style::default().fg(if is_active { BG } else { DIM }),
+                ),
+            ])
+        })
+        .collect();
+
+    f.render_widget(
+        Paragraph::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .title(Span::styled(
+                    format!(" {} ", s.library_title),
+                    Style::default().fg(MUTED),
+                )),
+        ),
+        area,
+    );
+}
+
+fn draw_library_content(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    if let Some(ref viewing) = app.library.viewing {
+        draw_library_viewing(f, viewing, border_color, area);
         return;
     }
+    match app.library.active_section {
+        LibrarySection::Playlists => draw_library_playlists(f, app, area, border_color),
+        LibrarySection::Mixes => draw_library_mixes(f, app, area, border_color),
+        LibrarySection::FavTracks => draw_library_fav_tracks(f, app, area, border_color),
+        LibrarySection::FavAlbums => draw_fav_albums(f, app, area),
+    }
+}
+
+fn draw_library_viewing(f: &mut Frame, viewing: &LibraryViewing, border_color: Color, area: Rect) {
+    let breadcrumb = format!(" ← {} ", viewing.title);
+    let rows: Vec<Row> = viewing
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let is_sel = i == viewing.cursor;
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("{:>3}", i + 1),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.title, 36),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.artist_names(), 24),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(f, area, rows, &breadcrumb, viewing.cursor, 4, border_color);
+}
+
+fn draw_library_playlists(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
     let s = app.lang.strings();
-    let total = app.playlists.len() + app.mixes.len();
-    if total == 0 {
+    let Some(playlists) = app.library.playlists.as_ref() else {
         f.render_widget(
-            Paragraph::new(if app.loading {
-                s.library_loading
-            } else {
-                s.library_hint
-            })
-            .style(Style::default().fg(MUTED))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(DIM))
-                    .title(Span::styled(
-                        format!(" {} ", s.library_title),
-                        Style::default().fg(MUTED),
-                    )),
-            ),
+            Paragraph::new(s.loading)
+                .style(Style::default().fg(MUTED))
+                .block(default_content_block(s.lib_playlists, border_color)),
             area,
         );
         return;
-    }
-
-    let items: Vec<Row> = app
-        .playlists
+    };
+    let cursor = app.library.cursor[LibrarySection::Playlists as usize];
+    let rows: Vec<Row> = playlists
         .iter()
         .enumerate()
         .map(|(i, p)| {
-            let is_sel = i == app.library_selected;
+            let is_sel = i == cursor;
             Row::new(vec![
                 Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
                 Cell::from(Span::styled(
                     truncate(&p.title, 40),
-                    Style::default()
-                        .fg(if is_sel { ACCENT } else { TEXT })
-                        .add_modifier(if is_sel {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
+                    style_item_name(is_sel, ACCENT),
                 )),
                 Cell::from(Span::styled(
                     app.lang.tracks_count(p.number_of_tracks),
@@ -852,28 +944,34 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                 )),
                 Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
             ])
-            .style(Style::default().bg(if is_sel {
-                BG3
-            } else if i % 2 == 0 {
-                BG
-            } else {
-                BG2
-            }))
+            .style(row_bg(i, is_sel))
         })
-        .chain(app.mixes.iter().enumerate().map(|(i, m)| {
-            let idx = app.playlists.len() + i;
-            let is_sel = idx == app.library_selected;
+        .collect();
+    render_item_table(f, area, rows, s.lib_playlists, cursor, 3, border_color);
+}
+
+fn draw_library_mixes(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let Some(mixes) = app.library.mixes.as_ref() else {
+        f.render_widget(
+            Paragraph::new(s.loading)
+                .style(Style::default().fg(MUTED))
+                .block(default_content_block(s.lib_mixes, border_color)),
+            area,
+        );
+        return;
+    };
+    let cursor = app.library.cursor[LibrarySection::Mixes as usize];
+    let rows: Vec<Row> = mixes
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let is_sel = i == cursor;
             Row::new(vec![
                 Cell::from(Span::styled("⊛ ", Style::default().fg(GOLD))),
                 Cell::from(Span::styled(
                     truncate(&m.title, 40),
-                    Style::default()
-                        .fg(if is_sel { GOLD } else { TEXT })
-                        .add_modifier(if is_sel {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
+                    style_item_name(is_sel, GOLD),
                 )),
                 Cell::from(Span::styled(
                     m.sub_title.as_deref().unwrap_or("").to_string(),
@@ -881,59 +979,123 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
                 )),
                 Cell::from(Span::styled("Mix", Style::default().fg(GOLD))),
             ])
-            .style(Style::default().bg(if is_sel {
-                BG3
-            } else if i % 2 == 0 {
-                BG
-            } else {
-                BG2
-            }))
-        }))
+            .style(row_bg(i, is_sel))
+        })
         .collect();
+    render_item_table(f, area, rows, s.lib_mixes, cursor, 3, border_color);
+}
 
-    let header = Row::new(vec![
-        Cell::from(""),
-        Cell::from(Span::styled(
-            s.col_name,
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
-        )),
-        Cell::from(Span::styled(
-            s.col_info,
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
-        )),
-        Cell::from(Span::styled(
-            s.col_type,
-            Style::default().fg(ACCENT2).add_modifier(Modifier::BOLD),
-        )),
-    ])
-    .style(Style::default().bg(BG2));
-
-    let mut state = ratatui::widgets::TableState::default();
-    state.select(Some(app.library_selected));
-
-    f.render_stateful_widget(
-        Table::new(
-            items,
-            [
-                Constraint::Length(3),
-                Constraint::Min(30),
-                Constraint::Length(20),
-                Constraint::Length(10),
-            ],
-        )
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(DIM))
-                .title(Span::styled(
-                    app.lang
-                        .library_title_with_counts(app.playlists.len(), app.mixes.len()),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+fn draw_library_fav_tracks(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let Some(tracks) = app.library.fav_tracks.as_ref() else {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.fav_tracks_empty
+            })
+            .style(Style::default().fg(MUTED))
+            .block(default_content_block(s.lib_fav_tracks, border_color)),
+            area,
+        );
+        return;
+    };
+    let cursor = app.library.cursor[LibrarySection::FavTracks as usize];
+    let rows: Vec<Row> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let is_sel = i == cursor;
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("{:>3}", i + 1),
+                    Style::default().fg(MUTED),
                 )),
-        )
-        .row_highlight_style(Style::default().bg(BG3)),
+                Cell::from(Span::styled(
+                    truncate(&t.title, 36),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.artist_names(), 24),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(f, area, rows, s.lib_fav_tracks, cursor, 4, border_color);
+}
+
+fn default_content_block(title: &str, border_color: Color) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(MUTED),
+        ))
+}
+
+fn style_item_name(is_sel: bool, color: Color) -> Style {
+    Style::default()
+        .fg(if is_sel { color } else { TEXT })
+        .add_modifier(if is_sel {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        })
+}
+
+fn row_bg(i: usize, is_sel: bool) -> Style {
+    Style::default().bg(if is_sel {
+        BG3
+    } else if i % 2 == 0 {
+        BG
+    } else {
+        BG2
+    })
+}
+
+fn render_item_table(
+    f: &mut Frame,
+    area: Rect,
+    rows: Vec<Row>,
+    title: &str,
+    cursor: usize,
+    col_count: u16,
+    border_color: Color,
+) {
+    let widths: Vec<Constraint> = match col_count {
+        3 => vec![
+            Constraint::Length(3),
+            Constraint::Min(30),
+            Constraint::Length(20),
+            Constraint::Length(10),
+        ],
+        _ => vec![
+            Constraint::Length(4),
+            Constraint::Min(26),
+            Constraint::Length(24),
+            Constraint::Length(6),
+        ],
+    };
+    let mut state = ratatui::widgets::TableState::default();
+    state.select(Some(cursor));
+    f.render_stateful_widget(
+        Table::new(rows, widths)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(
+                        format!(" {title} "),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    )),
+            )
+            .row_highlight_style(Style::default().bg(BG3)),
         area,
         &mut state,
     );
@@ -941,7 +1103,10 @@ fn draw_library_tab(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
     let s = app.lang.strings();
-    if app.fav_albums.is_empty() {
+    let fav_albums = app.library.fav_albums.as_ref();
+    let fav_album_selected = app.library.cursor[LibrarySection::FavAlbums as usize];
+    let is_empty = fav_albums.map_or(true, |a| a.is_empty());
+    if is_empty {
         f.render_widget(
             Paragraph::new(if app.loading {
                 s.loading
@@ -964,12 +1129,12 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let rows: Vec<Row> = app
-        .fav_albums
+    let rows: Vec<Row> = fav_albums
         .iter()
+        .flat_map(|a| a.iter())
         .enumerate()
         .map(|(i, a)| {
-            let is_sel = i == app.fav_album_selected;
+            let is_sel = i == fav_album_selected;
             Row::new(vec![
                 Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
                 Cell::from(Span::styled(
@@ -1019,7 +1184,7 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
     .style(Style::default().bg(BG2));
 
     let mut state = ratatui::widgets::TableState::default();
-    state.select(Some(app.fav_album_selected));
+    state.select(Some(fav_album_selected));
 
     f.render_stateful_widget(
         Table::new(
@@ -1038,7 +1203,8 @@ fn draw_fav_albums(f: &mut Frame, app: &App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(DIM))
                 .title(Span::styled(
-                    app.lang.fav_albums_title_with_count(app.fav_albums.len()),
+                    app.lang
+                        .fav_albums_title_with_count(fav_albums.map_or(0, |a| a.len())),
                     Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                 )),
         )
