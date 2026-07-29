@@ -178,6 +178,7 @@ cargo run
 | `h` / `l` or `←` / `→` | Focus sidebar / content (in Library) |
 | `Esc` | Back from drill-down view |
 | `a` | Add track to queue (in drill-down / FavTracks) |
+| `d` | Delete track from queue (Queue tab only) |
 | `1` | Quality: HiRes FLAC 24bit |
 | `2` | Quality: FLAC 16bit/44.1kHz |
 | `3` | Quality: AAC 320kbps |

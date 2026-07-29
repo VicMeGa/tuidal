@@ -217,8 +217,8 @@ impl Player {
             self.pos_skip += 1;
             // ponytail: query mpv every ~1s (20 ticks at 50ms) instead of every tick
             if self.pos_skip % 20 == 0 {
-                if let Some(pos) = self.query_time_pos() {
-                    self.elapsed = Duration::from_secs_f64(pos);
+                if let Some(dur) = self.query_time_pos() {
+                    self.elapsed = dur;
                 }
             } else if let Some(last) = self.last_tick {
                 self.elapsed += Instant::now().duration_since(last);
@@ -230,7 +230,7 @@ impl Player {
         }
     }
 
-    fn query_time_pos(&self) -> Option<f64> {
+    fn query_time_pos(&self) -> Option<Duration> {
         let mut stream = UnixStream::connect(socket_path()).ok()?;
         let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
         let cmd = b"{\"command\":[\"get_property\",\"time-pos\"]}\n";
@@ -238,15 +238,16 @@ impl Player {
         let mut buf = [0u8; 512];
         let n = stream.read(&mut buf).ok()?;
         if n == 0 {
-            return Some(0.0);
+            return Some(Duration::ZERO);
         }
         let resp = std::str::from_utf8(&buf[..n]).ok()?;
         let val: serde_json::Value = serde_json::from_str(resp).ok()?;
         let data = val.get("data")?;
         if data.is_null() {
-            return Some(0.0);
+            return Some(Duration::ZERO);
         }
-        data.as_f64()
+        let pos = data.as_f64()?;
+        mpv_pos_to_duration(pos)
     }
 
     pub fn progress(&self) -> f64 {
@@ -262,6 +263,13 @@ impl Player {
         let s = self.elapsed.as_secs();
         format!("{}:{:02}", s / 60, s % 60)
     }
+}
+
+pub(crate) fn mpv_pos_to_duration(pos: f64) -> Option<Duration> {
+    if pos.is_nan() || pos.is_infinite() || pos < 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(pos))
 }
 
 #[cfg(test)]
@@ -320,5 +328,31 @@ mod tests {
         });
         p.elapsed = Duration::from_secs(999);
         assert!((p.progress() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mpv_pos_to_duration_nan_returns_none() {
+        assert!(mpv_pos_to_duration(f64::NAN).is_none());
+    }
+
+    #[test]
+    fn test_mpv_pos_to_duration_infinite_returns_none() {
+        assert!(mpv_pos_to_duration(f64::INFINITY).is_none());
+        assert!(mpv_pos_to_duration(f64::NEG_INFINITY).is_none());
+    }
+
+    #[test]
+    fn test_mpv_pos_to_duration_negative_returns_none() {
+        assert!(mpv_pos_to_duration(-1.0).is_none());
+        assert!(mpv_pos_to_duration(-0.001).is_none());
+    }
+
+    #[test]
+    fn test_mpv_pos_to_duration_valid_returns_some() {
+        let d = mpv_pos_to_duration(0.0).expect("0.0 should be valid");
+        assert_eq!(d, Duration::ZERO);
+
+        let d = mpv_pos_to_duration(42.5).expect("42.5 should be valid");
+        assert_eq!(d, Duration::from_secs_f64(42.5));
     }
 }

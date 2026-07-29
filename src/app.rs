@@ -123,7 +123,7 @@ pub struct ApiStatus {
     pub repeat: RepeatMode,
     pub authenticated: bool,
     pub track_id: Option<u64>,
-    pub queue: Vec<Track>,
+    pub queue: Arc<Vec<Track>>,
     pub queue_index: Option<usize>,
 }
 
@@ -135,7 +135,7 @@ pub struct App {
 
     pub search_input: String,
     pub search_results: Vec<Track>,
-    pub queue: Vec<Track>,
+    pub queue: Arc<Vec<Track>>,
 
     pub selected: usize,
     pub queue_index: Option<usize>,
@@ -179,7 +179,7 @@ impl App {
             active_tab: Tab::Search,
             search_input: String::new(),
             search_results: Vec::new(),
-            queue: Vec::new(),
+            queue: Arc::new(Vec::new()),
             selected: 0,
             queue_index: None,
             authenticated: false,
@@ -446,7 +446,7 @@ impl App {
                         explicit: None,
                     };
                     if !self.queue.iter().any(|t| t.id == track.id) {
-                        self.queue.push(track.clone());
+                        Arc::make_mut(&mut self.queue).push(track.clone());
                     }
                     let qi = self
                         .queue
@@ -489,8 +489,45 @@ impl App {
             self.status_msg = self.lang.strings().status_already_in_queue.to_string();
             return;
         }
-        self.queue.push(track);
+        Arc::make_mut(&mut self.queue).push(track);
         self.status_msg = self.lang.strings().status_added_to_queue.to_string();
+    }
+
+    pub fn remove_from_queue(&mut self, index: usize) {
+        let playing_was_removed = self.queue_index == Some(index);
+        let removed = Self::remove_queue_index(&mut self.queue, &mut self.queue_index, index);
+        let Some(removed) = removed else { return };
+        if playing_was_removed {
+            if index < self.queue.len() {
+                self.stream_track_bg(self.queue[index].clone(), index);
+            } else if !self.queue.is_empty() {
+                self.stream_track_bg(self.queue[0].clone(), 0);
+            } else {
+                self.player.stop();
+                self.queue_index = None;
+            }
+        }
+        self.status_msg = format!("Eliminada: {}", removed.title);
+    }
+
+    /// Remove a track from the queue and adjust `queue_index`.
+    /// Returns the removed track, or `None` if `index` is out of bounds.
+    fn remove_queue_index(
+        queue: &mut Arc<Vec<Track>>,
+        queue_index: &mut Option<usize>,
+        index: usize,
+    ) -> Option<Track> {
+        if index >= queue.len() {
+            return None;
+        }
+        let removed = queue[index].clone();
+        Arc::make_mut(queue).remove(index);
+        if let Some(i) = queue_index.as_mut() {
+            if *i >= index {
+                *i = i.saturating_sub(1);
+            }
+        }
+        Some(removed)
     }
 
     pub fn play_selected_bg(&mut self) {
@@ -507,7 +544,7 @@ impl App {
         let Some(track) = track else { return };
         let queue_index = if self.active_tab == Tab::Search {
             if !self.queue.iter().any(|t| t.id == track.id) {
-                self.queue.push(track.clone());
+                Arc::make_mut(&mut self.queue).push(track.clone());
             }
             self.queue
                 .iter()
@@ -675,7 +712,7 @@ impl App {
             },
             None => return,
         };
-        self.queue = remaining;
+        self.queue = Arc::new(remaining);
         self.stream_track_bg(track, 0);
     }
 
@@ -688,7 +725,7 @@ impl App {
             },
             None => return,
         };
-        self.queue = remaining;
+        self.queue = Arc::new(remaining);
         self.stream_track_bg(track, 0);
     }
 
@@ -711,7 +748,7 @@ impl App {
             self.status_msg = self.lang.strings().status_already_in_queue.to_string();
             return;
         }
-        self.queue.push(track.clone());
+        Arc::make_mut(&mut self.queue).push(track.clone());
         self.status_msg = format!("▶ Añadida: {}", track.title);
     }
 
@@ -729,7 +766,7 @@ impl App {
         let mut added = 0usize;
         for track in &tracks {
             if !self.queue.iter().any(|t| t.id == track.id) {
-                self.queue.push(track.clone());
+                Arc::make_mut(&mut self.queue).push(track.clone());
                 added += 1;
             }
         }
@@ -916,5 +953,82 @@ impl App {
     pub fn set_volume(&mut self, v: u8) {
         self.player.set_volume(v);
         self.save_settings();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_track(id: u64, title: &str) -> Track {
+        Track {
+            id,
+            title: title.to_string(),
+            duration: 200,
+            track_number: None,
+            artists: vec![],
+            album: Album {
+                id: 0,
+                title: String::new(),
+            },
+            audio_quality: None,
+            explicit: None,
+        }
+    }
+
+    #[test]
+    fn test_remove_queue_index_after_current() {
+        let mut queue: Arc<Vec<Track>> = Arc::new(vec![
+            make_track(1, "A"),
+            make_track(2, "B"),
+            make_track(3, "C"),
+        ]);
+        let mut queue_index = Some(1);
+        let removed = App::remove_queue_index(&mut queue, &mut queue_index, 2);
+        assert_eq!(removed.unwrap().id, 3);
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue_index, Some(1));
+    }
+
+    #[test]
+    fn test_remove_queue_index_before_current() {
+        let mut queue: Arc<Vec<Track>> = Arc::new(vec![
+            make_track(1, "A"),
+            make_track(2, "B"),
+            make_track(3, "C"),
+        ]);
+        let mut queue_index = Some(2);
+        let removed = App::remove_queue_index(&mut queue, &mut queue_index, 0);
+        assert_eq!(removed.unwrap().id, 1);
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue_index, Some(1));
+    }
+
+    #[test]
+    fn test_remove_queue_index_current_is_first() {
+        let mut queue: Arc<Vec<Track>> = Arc::new(vec![make_track(1, "A"), make_track(2, "B")]);
+        let mut queue_index = Some(0);
+        let removed = App::remove_queue_index(&mut queue, &mut queue_index, 0);
+        assert_eq!(removed.unwrap().id, 1);
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue_index, Some(0));
+    }
+
+    #[test]
+    fn test_remove_queue_index_out_of_bounds() {
+        let mut queue: Arc<Vec<Track>> = Arc::new(vec![make_track(1, "A")]);
+        let mut queue_index = Some(0);
+        let removed = App::remove_queue_index(&mut queue, &mut queue_index, 5);
+        assert!(removed.is_none());
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue_index, Some(0));
+    }
+
+    #[test]
+    fn test_remove_queue_index_empty_queue() {
+        let mut queue: Arc<Vec<Track>> = Arc::new(vec![]);
+        let mut queue_index = None;
+        let removed = App::remove_queue_index(&mut queue, &mut queue_index, 0);
+        assert!(removed.is_none());
     }
 }

@@ -297,6 +297,11 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             }
         }
         KeyCode::Char(' ') => app.player.toggle_pause(),
+        KeyCode::Char('d') => {
+            if app.active_tab == Tab::Queue && !app.queue.is_empty() {
+                app.remove_from_queue(app.selected);
+            }
+        }
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),
         KeyCode::Right | KeyCode::Char('l') => {
