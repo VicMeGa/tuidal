@@ -10,7 +10,7 @@ mod tidal;
 mod ui;
 
 use anyhow::Result;
-use app::{ApiStatus, App, AppEvent, InputMode, Tab};
+use app::{ApiStatus, App, AppEvent, InputMode, SearchFocus, SearchSection, Tab};
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -151,12 +151,18 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.should_quit = true;
                             continue;
                         }
+                        if key.modifiers == KeyModifiers::CONTROL
+                            && key.code == KeyCode::Char('u')
+                        {
+                            app.clear_search();
+                            continue;
+                        }
                         if key.code == KeyCode::Char('l') && key.modifiers == KeyModifiers::ALT
                         {
                             app.cycle_lang();
                         } else {
                             match app.input_mode {
-                                InputMode::Normal => handle_normal(key.code, app),
+                                InputMode::Normal => handle_normal(key.code, key.modifiers, app),
                                 InputMode::Search => handle_search(key.code, app),
                             }
                         }
@@ -174,31 +180,32 @@ async fn run_app<B: ratatui::backend::Backend>(
     Ok(())
 }
 
-fn handle_normal(key: KeyCode, app: &mut App) {
+fn handle_normal(key: KeyCode, modifiers: KeyModifiers, app: &mut App) {
     match key {
         KeyCode::Char('q') => {
             app.player.stop();
             app.should_quit = true;
         }
         KeyCode::Char('/') | KeyCode::Char('s') => {
+            app.active_tab = Tab::Search;
             app.input_mode = InputMode::Search;
-            app.search_input.clear();
         }
         KeyCode::Char('L') => {
             if !app.authenticated {
                 app.start_login_bg();
             }
         }
+        KeyCode::Char('?') => {
+            app.show_help = !app.show_help;
+        }
         KeyCode::Char('i') => {
             if app.authenticated {
-                app.active_tab = Tab::Library;
-                app.library.viewing = None;
-                app.ensure_section_loaded();
+                app.switch_tab(Tab::Library);
             }
         }
         KeyCode::Char('F') => {
             if app.authenticated {
-                app.active_tab = Tab::Library;
+                app.switch_tab(Tab::Library);
                 app.library.focus = LibraryFocus::Content;
                 app.library.active_section = LibrarySection::FavTracks;
                 app.library.viewing = None;
@@ -206,14 +213,16 @@ fn handle_normal(key: KeyCode, app: &mut App) {
             }
         }
         KeyCode::Char('A') => {
-            if app.active_tab == Tab::Library
+            if app.active_tab == Tab::Search && app.search.viewing.is_some() {
+                app.add_all_tracks_to_queue();
+            } else if app.active_tab == Tab::Library
                 && app.library.focus == LibraryFocus::Content
                 && (app.library.viewing.is_some()
                     || app.library.active_section == LibrarySection::FavTracks)
             {
                 app.add_all_tracks_to_queue();
             } else if app.authenticated {
-                app.active_tab = Tab::Library;
+                app.switch_tab(Tab::Library);
                 app.library.focus = LibraryFocus::Content;
                 app.library.active_section = LibrarySection::FavAlbums;
                 app.library.viewing = None;
@@ -281,12 +290,47 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 } else {
                     app.library_select_enter();
                 }
+            } else if app.active_tab == Tab::Search {
+                if app.search.focus == SearchFocus::Sidebar {
+                    app.search.focus = SearchFocus::Content;
+                } else if app.search.viewing.is_some() {
+                    app.play_drilldown_track();
+                } else {
+                    match app.search.active_section {
+                        SearchSection::Tracks => {
+                            app.play_selected_bg();
+                        }
+                        SearchSection::Albums => {
+                            let cursor = app.search.cursor[SearchSection::Albums as usize];
+                            if let Some(album) = app.search.results.albums.get(cursor) {
+                                app.search.pending_viewing_title = album.title.clone();
+                                app.load_album_tracks_bg(album.id, album.title.clone());
+                            }
+                        }
+                        SearchSection::Playlists => {
+                            let cursor = app.search.cursor[SearchSection::Playlists as usize];
+                            if let Some(playlist) = app.search.results.playlists.get(cursor) {
+                                app.search.pending_viewing_title = playlist.title.clone();
+                                app.load_playlist_tracks_bg(playlist.uuid.clone());
+                            }
+                        }
+                        SearchSection::Artists => {
+                            let cursor = app.search.cursor[SearchSection::Artists as usize];
+                            if let Some(artist) = app.search.results.artists.get(cursor) {
+                                app.search.input = artist.name.clone();
+                                app.do_search_bg();
+                            }
+                        }
+                    }
+                }
             } else {
                 app.play_selected_bg();
             }
         }
         KeyCode::Char('a') => {
-            if app.active_tab == Tab::Library
+            if app.active_tab == Tab::Search && app.search.viewing.is_some() {
+                app.add_current_track_to_queue();
+            } else if app.active_tab == Tab::Library
                 && app.library.focus == LibraryFocus::Content
                 && (app.library.viewing.is_some()
                     || app.library.active_section == LibrarySection::FavTracks)
@@ -304,10 +348,19 @@ fn handle_normal(key: KeyCode, app: &mut App) {
         }
         KeyCode::Char('n') => app.play_next_bg(),
         KeyCode::Char('p') => app.play_prev_bg(),
+        KeyCode::Char('m') => {
+            if app.active_tab == Tab::Search {
+                app.load_more_bg();
+            }
+        }
         KeyCode::Right | KeyCode::Char('l') => {
             if app.active_tab == Tab::Library {
                 if app.library.focus == LibraryFocus::Sidebar {
                     app.library.focus = LibraryFocus::Content;
+                }
+            } else if app.active_tab == Tab::Search {
+                if app.search.focus == SearchFocus::Sidebar {
+                    app.search.focus = SearchFocus::Content;
                 }
             } else {
                 app.player.seek_forward();
@@ -320,21 +373,41 @@ fn handle_normal(key: KeyCode, app: &mut App) {
                 } else {
                     app.library.focus = LibraryFocus::Sidebar;
                 }
+            } else if app.active_tab == Tab::Search {
+                if app.search.viewing.is_some() {
+                    app.search.viewing = None;
+                } else if app.search.focus == SearchFocus::Content {
+                    app.search.focus = SearchFocus::Sidebar;
+                }
             } else {
                 app.player.seek_backward();
             }
         }
         KeyCode::Esc => {
-            if app.active_tab == Tab::Library && app.library.viewing.is_some() {
+            if app.show_help {
+                app.show_help = false;
+            } else if app.active_tab == Tab::Library && app.library.viewing.is_some() {
                 app.library.viewing = None;
+            } else if app.active_tab == Tab::Search && app.search.viewing.is_some() {
+                app.search.viewing = None;
             }
         }
         KeyCode::Char('+') | KeyCode::Char('=') => app.volume_up(),
         KeyCode::Char('-') => app.volume_down(),
         KeyCode::Tab => app.next_tab(),
-        KeyCode::Char('1') => app.set_quality(tidal::Quality::HiResLossless),
-        KeyCode::Char('2') => app.set_quality(tidal::Quality::Lossless),
-        KeyCode::Char('3') => app.set_quality(tidal::Quality::High),
+        KeyCode::Char('1') if modifiers == KeyModifiers::ALT => {
+            app.set_quality(tidal::Quality::HiResLossless)
+        }
+        KeyCode::Char('1') => app.switch_tab(Tab::Search),
+        KeyCode::Char('2') if modifiers == KeyModifiers::ALT => {
+            app.set_quality(tidal::Quality::Lossless)
+        }
+        KeyCode::Char('2') => app.switch_tab(Tab::Queue),
+        KeyCode::Char('3') if modifiers == KeyModifiers::ALT => {
+            app.set_quality(tidal::Quality::High)
+        }
+        KeyCode::Char('3') => app.switch_tab(Tab::Now),
+        KeyCode::Char('4') => app.switch_tab(Tab::Library),
         _ => {}
     }
 }
@@ -343,16 +416,25 @@ fn handle_search(key: KeyCode, app: &mut App) {
     match key {
         KeyCode::Esc => {
             app.input_mode = InputMode::Normal;
+            app.search.history_cursor = None;
         }
         KeyCode::Enter => {
             app.input_mode = InputMode::Normal;
             app.do_search_bg();
         }
         KeyCode::Backspace => {
-            app.search_input.pop();
+            app.search.history_cursor = None;
+            app.search.input.pop();
         }
         KeyCode::Char(c) => {
-            app.search_input.push(c);
+            app.search.history_cursor = None;
+            app.search.input.push(c);
+        }
+        KeyCode::Up => {
+            app.search.history_up();
+        }
+        KeyCode::Down => {
+            app.search.history_down();
         }
         _ => {}
     }

@@ -1,13 +1,33 @@
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::app::AppEvent;
+use crate::app::{AppEvent, SearchSection};
 use crate::tidal::{TidalDaemonClient, Track};
 
-pub fn search(tidal: Arc<TidalDaemonClient>, tx: UnboundedSender<AppEvent>, query: String) {
+/// section = None → initial search (replaces results, emits SearchDone).
+/// section = Some(s) → pagination for section s (appends results, emits SearchMoreDone).
+pub fn search(
+    tidal: Arc<TidalDaemonClient>,
+    tx: UnboundedSender<AppEvent>,
+    query: String,
+    limit: usize,
+    offset: usize,
+    generation: u64,
+    section: Option<SearchSection>,
+) {
     tokio::spawn(async move {
-        let result = tidal.search(&query, 20).await.map_err(|e| e.to_string());
-        let _ = tx.send(AppEvent::SearchDone(result));
+        let result = tidal
+            .search(&query, limit, offset)
+            .await
+            .map_err(|e| e.to_string());
+        match section {
+            Some(section) => {
+                let _ = tx.send(AppEvent::SearchMoreDone(result, generation, section));
+            }
+            None => {
+                let _ = tx.send(AppEvent::SearchDone(result, generation));
+            }
+        }
     });
 }
 

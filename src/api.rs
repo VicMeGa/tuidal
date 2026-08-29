@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::app::{ApiCommand, ApiStatus, ApiTrack, AppEvent};
-use crate::tidal::{FavAlbum, TidalDaemonClient, Track};
+use crate::tidal::{FavAlbum, SearchResults, TidalDaemonClient, Track};
 
 pub const PORT: u16 = 7837;
 
@@ -125,9 +125,9 @@ struct JustPlayQuery {
 }
 
 async fn handle_just_play(State(s): State<ApiState>, Query(p): Query<JustPlayQuery>) -> StatusCode {
-    match s.tidal.search(&p.q, 1).await {
-        Ok(tracks) if !tracks.is_empty() => {
-            let t = &tracks[0];
+    match s.tidal.search(&p.q, 1, 0).await {
+        Ok(results) if !results.tracks.is_empty() => {
+            let t = &results.tracks[0];
             let api_track = ApiTrack {
                 id: t.id,
                 title: t.title.clone(),
@@ -158,6 +158,8 @@ struct SearchQuery {
     q: String,
     #[serde(default = "default_limit")]
     limit: usize,
+    #[serde(default)]
+    offset: usize,
 }
 fn default_limit() -> usize {
     20
@@ -166,9 +168,9 @@ fn default_limit() -> usize {
 async fn handle_search(
     State(s): State<ApiState>,
     Query(p): Query<SearchQuery>,
-) -> Result<Json<Vec<Track>>, StatusCode> {
+) -> Result<Json<SearchResults>, StatusCode> {
     s.tidal
-        .search(&p.q, p.limit)
+        .search(&p.q, p.limit, p.offset)
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)

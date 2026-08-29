@@ -95,10 +95,56 @@ def _album_dict(a) -> dict:
     }
 
 
-def handle_search(session, query, limit=20):
-    results = session.search(query, [tidalapi.Track], limit=limit)
-    tracks = results.get("tracks", []) or []
-    return [_track_dict(t) for t in tracks[:limit]]
+def _artist_dict(a) -> dict:
+    return {
+        "id":   a.id,
+        "name": a.name,
+    }
+
+
+def _playlist_image(p):
+    try:
+        return p.image(480)
+    except Exception:
+        return None
+
+
+def _playlist_square_image(p):
+    try:
+        return p.image(480, wide_fallback=False)
+    except Exception:
+        return None
+
+
+def _playlist_dict(p) -> dict:
+    return {
+        "uuid":             str(p.id),
+        "title":            p.name,
+        "numberOfTracks":   p.num_tracks,
+        "duration":         p.duration or 0,
+        "type":             str(getattr(p, 'type', 'USER')),
+        "publicPlaylist":   getattr(p, 'public', False),
+        "image":            _playlist_image(p),
+        "squareImage":      _playlist_square_image(p),
+    }
+
+
+def handle_search(session, query, limit=10, offset=0):
+    models = [tidalapi.Track, tidalapi.Album, tidalapi.Artist, tidalapi.Playlist]
+    results = session.search(query, models, limit=limit, offset=offset)
+
+    def _safe(key, converter):
+        try:
+            return [converter(x) for x in (results.get(key, []) or [])]
+        except Exception:
+            return []
+
+    return {
+        "tracks":    _safe("tracks", _track_dict),
+        "albums":    _safe("albums", _album_dict),
+        "artists":   _safe("artists", _artist_dict),
+        "playlists": _safe("playlists", _playlist_dict),
+    }
 
 
 def handle_stream(session, track_id, quality=None):
@@ -140,17 +186,7 @@ def handle_lyrics(session, track_id):
 
 def handle_playlists(session):
     playlists = session.user.playlists()
-    result = []
-    for p in playlists:
-        result.append({
-            "uuid":             str(p.id),
-            "title":            p.name,
-            "numberOfTracks":   p.num_tracks,
-            "duration":         p.duration or 0,
-            "type":             str(getattr(p, 'type', 'USER')),
-            "publicPlaylist":   getattr(p, 'public', False),
-        })
-    return result
+    return [_playlist_dict(p) for p in playlists]
 
 
 def handle_playlist_tracks(session, uuid):

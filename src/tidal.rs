@@ -134,6 +134,17 @@ pub struct Playlist {
     pub square_image: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SearchResults {
+    pub tracks: Vec<Track>,
+    /// Reuses FavAlbum — its shape (id, title, numberOfTracks, duration, artists, coverUrl)
+    /// matches the search album response exactly. Named FavAlbum (not SearchAlbum) to avoid
+    /// duplicating an identical struct. Rename when/if FavAlbum is ever refactored.
+    pub albums: Vec<FavAlbum>,
+    pub artists: Vec<Artist>,
+    pub playlists: Vec<Playlist>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mix {
@@ -360,11 +371,11 @@ impl TidalDaemonClient {
 
     // ── Wrappers tipo-safe ──────────────────────────────────────────────────
 
-    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<Track>> {
+    pub async fn search(&self, query: &str, limit: usize, offset: usize) -> Result<SearchResults> {
         let v = self
             .call(
                 "search",
-                serde_json::json!({"query": query, "limit": limit}),
+                serde_json::json!({"query": query, "limit": limit, "offset": offset}),
             )
             .await?;
         serde_json::from_value(v).map_err(|e| anyhow!("JSON error: {e}"))
@@ -559,5 +570,44 @@ mod tests {
         let lyrics = Lyrics::from_response(resp);
         assert!(!lyrics.has_sync);
         assert_eq!(lyrics.current_line(42), 0);
+    }
+
+    #[test]
+    fn test_search_results_deserialize() {
+        let json = r#"{
+            "tracks": [
+                {"id": 1, "title": "Track A", "duration": 200, "track_number": 1,
+                 "artists": [{"id": 10, "name": "Artist 1"}],
+                 "album": {"id": 100, "title": "Album 1"},
+                 "audio_quality": "LOSSLESS", "explicit": false}
+            ],
+            "albums": [
+                {"id": 2, "title": "Album X", "numberOfTracks": 12, "duration": 3600,
+                 "artists": [{"id": 20, "name": "Artist X"}],
+                 "coverUrl": "https://example.com/cover.jpg"}
+            ],
+            "artists": [
+                {"id": 3, "name": "Artist Y"}
+            ],
+            "playlists": [
+                {"uuid": "pl-uuid", "title": "My Playlist", "numberOfTracks": 25,
+                 "duration": 7200, "type": "USER", "publicPlaylist": true,
+                 "image": null, "squareImage": null}
+            ]
+        }"#;
+
+        let result: SearchResults = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(result.tracks.len(), 1);
+        assert_eq!(result.tracks[0].title, "Track A");
+        assert_eq!(result.tracks[0].artists[0].name, "Artist 1");
+        assert_eq!(result.albums.len(), 1);
+        assert_eq!(result.albums[0].title, "Album X");
+        assert_eq!(result.albums[0].number_of_tracks, 12);
+        assert!(result.albums[0].cover_url.is_some());
+        assert_eq!(result.artists.len(), 1);
+        assert_eq!(result.artists[0].name, "Artist Y");
+        assert_eq!(result.playlists.len(), 1);
+        assert_eq!(result.playlists[0].uuid, "pl-uuid");
+        assert_eq!(result.playlists[0].number_of_tracks, 25);
     }
 }

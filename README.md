@@ -164,7 +164,11 @@ cargo run
 
 | Key | Action |
 |-----|--------|
-| `/` or `s` | Search |
+| `/` or `s` | Search (jumps to Search tab automatically) |
+| `1` / `2` / `3` / `4` | Jump to Search / Queue / Now / Library tab |
+| `?` | Toggle help menu |
+| `Ctrl+U` | Clear search results and input |
+| `m` | Load more results (Search tab, content focus) |
 | `Enter` | Play selected / drill-down into playlist/mix/album |
 | `Space` | Pause / Resume |
 | `n` / `p` | Next / Previous track |
@@ -175,13 +179,14 @@ cargo run
 | `F` | Open Library → Favorite Tracks |
 | `A` | Open Library → Favorite Albums (add-all in Library) |
 | `j` / `k` or `↓` / `↑` | Navigate list / change section (sidebar) |
+| `↑` / `↓` (in search input) | Browse search history |
 | `h` / `l` or `←` / `→` | Focus sidebar / content (in Library) |
-| `Esc` | Back from drill-down view |
+| `Esc` | Close help / back from drill-down view |
 | `a` | Add track to queue (in drill-down / FavTracks) |
 | `d` | Delete track from queue (Queue tab only) |
-| `1` | Quality: HiRes FLAC 24bit |
-| `2` | Quality: FLAC 16bit/44.1kHz |
-| `3` | Quality: AAC 320kbps |
+| `Alt+1` | Quality: HiRes FLAC 24bit |
+| `Alt+2` | Quality: FLAC 16bit/44.1kHz |
+| `Alt+3` | Quality: AAC 320kbps |
 | `L` | Login to Tidal |
 | `Alt+L` | Cycle language (ES → EN → DE → RO) |
 | `q` | Quit |

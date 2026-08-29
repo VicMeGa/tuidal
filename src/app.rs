@@ -4,7 +4,7 @@ use crate::player::{Player, TrackInfo};
 use crate::settings::Settings;
 use crate::tasks;
 use crate::tidal::{
-    Album, Artist, CoverInfo, FavAlbum, Lyrics, Mix, Playlist, Quality, StreamInfo,
+    Album, Artist, CoverInfo, FavAlbum, Lyrics, Mix, Playlist, Quality, SearchResults, StreamInfo,
     TidalDaemonClient, Track,
 };
 use image::DynamicImage;
@@ -12,8 +12,150 @@ use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use serde::Deserialize as DeserializeAttr;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SearchFocus {
+    Sidebar,
+    Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(usize)]
+pub enum SearchSection {
+    Tracks = 0,
+    Albums = 1,
+    Artists = 2,
+    Playlists = 3,
+}
+
+impl SearchSection {
+    pub fn next(self) -> Self {
+        match self {
+            SearchSection::Tracks => SearchSection::Albums,
+            SearchSection::Albums => SearchSection::Artists,
+            SearchSection::Artists => SearchSection::Playlists,
+            SearchSection::Playlists => SearchSection::Tracks,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            SearchSection::Tracks => SearchSection::Playlists,
+            SearchSection::Albums => SearchSection::Tracks,
+            SearchSection::Artists => SearchSection::Albums,
+            SearchSection::Playlists => SearchSection::Artists,
+        }
+    }
+}
+
+pub struct SearchState {
+    pub focus: SearchFocus,
+    pub active_section: SearchSection,
+    pub cursor: [usize; 4],
+    pub results: SearchResults,
+    pub viewing: Option<LibraryViewing>,
+    pub pending_viewing_title: String,
+    pub input: String,
+    pub history: VecDeque<String>,
+    pub history_cursor: Option<usize>,
+    pub draft: String,
+    /// Items already fetched per section — doubles as the next pagination offset.
+    pub loaded: [usize; 4],
+    /// True when Tidal reported no more results for that section.
+    pub exhausted: [bool; 4],
+}
+
+impl SearchState {
+    pub fn new() -> Self {
+        Self {
+            focus: SearchFocus::Sidebar,
+            active_section: SearchSection::Tracks,
+            cursor: [0; 4],
+            results: SearchResults::default(),
+            viewing: None,
+            pending_viewing_title: String::new(),
+            input: String::new(),
+            history: VecDeque::new(),
+            history_cursor: None,
+            draft: String::new(),
+            loaded: [0; 4],
+            exhausted: [false; 4],
+        }
+    }
+
+    pub fn len(&self, section: SearchSection) -> usize {
+        match section {
+            SearchSection::Tracks => self.results.tracks.len(),
+            SearchSection::Albums => self.results.albums.len(),
+            SearchSection::Artists => self.results.artists.len(),
+            SearchSection::Playlists => self.results.playlists.len(),
+        }
+    }
+
+    pub fn current_len(&self) -> usize {
+        self.len(self.active_section)
+    }
+
+    pub fn record_history(&mut self, query: &str) {
+        if let Some(pos) = self.history.iter().position(|h| h == query) {
+            self.history.remove(pos);
+        }
+        self.history.push_front(query.to_string());
+        while self.history.len() > 10 {
+            self.history.pop_back();
+        }
+        self.history_cursor = None;
+    }
+
+    pub fn history_up(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        if self.history_cursor.is_none() {
+            self.draft = self.input.clone();
+            self.history_cursor = Some(0);
+        } else {
+            let cursor = self.history_cursor.unwrap();
+            if cursor + 1 < self.history.len() {
+                self.history_cursor = Some(cursor + 1);
+            } else {
+                return;
+            }
+        }
+        let idx = self.history_cursor.unwrap();
+        self.input.clone_from(&self.history[idx]);
+    }
+
+    pub fn history_down(&mut self) {
+        match self.history_cursor {
+            None => {}
+            Some(0) => {
+                self.history_cursor = None;
+                self.input = std::mem::take(&mut self.draft);
+            }
+            Some(cursor) => {
+                let prev = cursor - 1;
+                self.history_cursor = Some(prev);
+                self.input.clone_from(&self.history[prev]);
+            }
+        }
+    }
+}
+
+/// Appends items from `src` that aren't already present in `dst` (keyed by `key`).
+/// Returns the number of items actually appended.
+fn append_dedup<T, K: Eq>(dst: &mut Vec<T>, src: Vec<T>, key: impl Fn(&T) -> K) -> usize {
+    let before = dst.len();
+    for item in src {
+        if !dst.iter().any(|existing| key(existing) == key(&item)) {
+            dst.push(item);
+        }
+    }
+    dst.len() - before
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputMode {
@@ -30,7 +172,8 @@ pub enum Tab {
 }
 
 pub enum AppEvent {
-    SearchDone(Result<Vec<Track>, String>),
+    SearchDone(Result<SearchResults, String>, u64),
+    SearchMoreDone(Result<SearchResults, String>, u64, SearchSection),
     StreamReady {
         track: Track,
         info: StreamInfo,
@@ -133,8 +276,7 @@ pub struct App {
     pub input_mode: InputMode,
     pub active_tab: Tab,
 
-    pub search_input: String,
-    pub search_results: Vec<Track>,
+    pub search: SearchState,
     pub queue: Arc<Vec<Track>>,
 
     pub selected: usize,
@@ -145,6 +287,7 @@ pub struct App {
     pub loading: bool,
     pub auto_advance: bool,
     pub should_quit: bool,
+    pub show_help: bool,
 
     pub device_code: Option<String>,
     pub user_code: Option<String>,
@@ -159,6 +302,7 @@ pub struct App {
     pub last_img_area: Option<(u16, u16)>,
     pub current_track_id: Option<u64>,
     pub stream_generation: u64,
+    pub search_generation: u64,
 
     pub library: LibraryState,
 
@@ -177,8 +321,7 @@ impl App {
             player: Player::new(),
             input_mode: InputMode::Normal,
             active_tab: Tab::Search,
-            search_input: String::new(),
-            search_results: Vec::new(),
+            search: SearchState::new(),
             queue: Arc::new(Vec::new()),
             selected: 0,
             queue_index: None,
@@ -187,6 +330,7 @@ impl App {
             loading: false,
             auto_advance: false,
             should_quit: false,
+            show_help: false,
             device_code: None,
             user_code: None,
             auth_url: None,
@@ -198,6 +342,7 @@ impl App {
             last_img_area: None,
             current_track_id: None,
             stream_generation: 0,
+            search_generation: 0,
             library: LibraryState::new(),
 
             lang: Lang::Es,
@@ -206,6 +351,23 @@ impl App {
             repeat: RepeatMode::All,
             lyrics: None,
         }
+    }
+
+    pub fn switch_tab(&mut self, tab: Tab) {
+        if self.active_tab == tab {
+            return;
+        }
+
+        let entering_library = tab == Tab::Library;
+
+        self.active_tab = tab;
+
+        if entering_library {
+            self.library.active_section = LibrarySection::Playlists;
+            self.library.focus = LibraryFocus::Sidebar;
+            self.ensure_section_loaded();
+        }
+        self.selected = 0;
     }
 
     pub fn cycle_lang(&mut self) {
@@ -220,18 +382,84 @@ impl App {
 
     pub fn handle_event(&mut self, event: AppEvent) {
         match event {
-            AppEvent::SearchDone(Ok(results)) => {
-                self.status_msg = if results.is_empty() {
+            AppEvent::SearchDone(Ok(results), generation) => {
+                if generation != self.search_generation {
+                    return;
+                }
+                let total: usize = results.tracks.len()
+                    + results.albums.len()
+                    + results.artists.len()
+                    + results.playlists.len();
+                self.status_msg = if total == 0 {
                     self.lang.strings().status_no_results.to_string()
                 } else {
-                    self.lang.results_count(results.len())
+                    self.lang.results_count(total)
                 };
-                self.search_results = results;
-                self.selected = 0;
+                self.search.results = results;
+                self.search.cursor = [0; 4];
+                self.search.focus = SearchFocus::Sidebar;
+                self.search.active_section = SearchSection::Tracks;
+                self.search.viewing = None;
+                self.search.loaded = [
+                    self.search.results.tracks.len(),
+                    self.search.results.albums.len(),
+                    self.search.results.artists.len(),
+                    self.search.results.playlists.len(),
+                ];
+                self.search.exhausted = [
+                    self.search.results.tracks.len() < 10,
+                    self.search.results.albums.len() < 10,
+                    self.search.results.artists.len() < 10,
+                    self.search.results.playlists.len() < 10,
+                ];
                 self.active_tab = Tab::Search;
                 self.loading = false;
             }
-            AppEvent::SearchDone(Err(e)) => {
+            AppEvent::SearchMoreDone(Ok(results), generation, section) => {
+                if generation != self.search_generation {
+                    return;
+                }
+                let idx = section as usize;
+                let page_size = match section {
+                    SearchSection::Tracks => results.tracks.len(),
+                    SearchSection::Albums => results.albums.len(),
+                    SearchSection::Artists => results.artists.len(),
+                    SearchSection::Playlists => results.playlists.len(),
+                };
+                let appended = match section {
+                    SearchSection::Tracks => {
+                        append_dedup(&mut self.search.results.tracks, results.tracks, |t| t.id)
+                    }
+                    SearchSection::Albums => {
+                        append_dedup(&mut self.search.results.albums, results.albums, |a| a.id)
+                    }
+                    SearchSection::Artists => {
+                        append_dedup(&mut self.search.results.artists, results.artists, |a| a.id)
+                    }
+                    SearchSection::Playlists => {
+                        append_dedup(&mut self.search.results.playlists, results.playlists, |p| {
+                            p.uuid.clone()
+                        })
+                    }
+                };
+                self.search.loaded[idx] += appended;
+                if page_size < 10 || appended == 0 {
+                    self.search.exhausted[idx] = true;
+                }
+                self.status_msg = self.lang.results_count(self.search.len(section));
+                self.loading = false;
+            }
+            AppEvent::SearchMoreDone(Err(e), generation, _section) => {
+                if generation != self.search_generation {
+                    return;
+                }
+                self.status_msg = self.lang.search_error(&e);
+                self.loading = false;
+            }
+            AppEvent::SearchDone(Err(e), generation) => {
+                if generation != self.search_generation {
+                    return;
+                }
                 self.status_msg = self.lang.search_error(&e);
                 self.loading = false;
             }
@@ -347,12 +575,21 @@ impl App {
             }
             AppEvent::PlaylistTracksLoaded(tracks) => {
                 let n = tracks.len();
-                let title = std::mem::take(&mut self.library.pending_viewing_title);
-                self.library.viewing = Some(LibraryViewing {
-                    title,
-                    tracks,
-                    cursor: 0,
-                });
+                if !self.search.pending_viewing_title.is_empty() {
+                    let title = std::mem::take(&mut self.search.pending_viewing_title);
+                    self.search.viewing = Some(LibraryViewing {
+                        title,
+                        tracks,
+                        cursor: 0,
+                    });
+                } else {
+                    let title = std::mem::take(&mut self.library.pending_viewing_title);
+                    self.library.viewing = Some(LibraryViewing {
+                        title,
+                        tracks,
+                        cursor: 0,
+                    });
+                }
                 self.loading = false;
                 self.status_msg = self.lang.tracks_loaded(n);
             }
@@ -466,12 +703,70 @@ impl App {
             self.status_msg = self.lang.strings().status_login_required.to_string();
             return;
         }
-        if self.search_input.is_empty() {
+        if self.search.input.is_empty() {
             return;
         }
+        let query = self.search.input.clone();
+        self.search.record_history(&query);
+        self.search.loaded = [0; 4];
+        self.search.exhausted = [false; 4];
+        self.search_generation += 1;
+        let generation = self.search_generation;
         self.loading = true;
-        self.status_msg = self.lang.searching(&self.search_input);
-        tasks::search(self.tidal.clone(), self.tx(), self.search_input.clone());
+        self.status_msg = self.lang.searching(&self.search.input);
+        tasks::search(
+            self.tidal.clone(),
+            self.tx(),
+            self.search.input.clone(),
+            10,
+            0,
+            generation,
+            None,
+        );
+    }
+
+    /// Fetches the next page for the active search section and appends it.
+    /// Only valid when browsing search content (not the sidebar/drill-down).
+    pub fn load_more_bg(&mut self) {
+        if !self.authenticated {
+            self.status_msg = self.lang.strings().status_login_required_short.to_string();
+            return;
+        }
+        if self.active_tab != Tab::Search
+            || self.search.viewing.is_some()
+            || self.search.focus != SearchFocus::Content
+        {
+            return;
+        }
+        if self.search.input.is_empty() {
+            return;
+        }
+        let section = self.search.active_section;
+        let idx = section as usize;
+        if self.search.exhausted[idx] {
+            self.status_msg = self.lang.strings().search_no_more_results.to_string();
+            return;
+        }
+        let offset = self.search.loaded[idx];
+        if offset >= 300 {
+            self.search.exhausted[idx] = true;
+            self.status_msg = self.lang.strings().search_no_more_results.to_string();
+            return;
+        }
+        let query = self.search.input.clone();
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        self.loading = true;
+        self.status_msg = self.lang.searching_more(&query);
+        tasks::search(
+            self.tidal.clone(),
+            self.tx(),
+            query,
+            10,
+            offset,
+            generation,
+            Some(section),
+        );
     }
 
     pub fn add_selected_to_queue(&mut self) {
@@ -480,7 +775,18 @@ impl App {
             return;
         }
         let track = match self.active_tab {
-            Tab::Search => self.search_results.get(self.selected).cloned(),
+            Tab::Search => {
+                if self.search.active_section != SearchSection::Tracks
+                    || self.search.viewing.is_some()
+                {
+                    return;
+                }
+                self.search
+                    .results
+                    .tracks
+                    .get(self.search.cursor[SearchSection::Tracks as usize])
+                    .cloned()
+            }
             Tab::Queue => self.queue.get(self.selected).cloned(),
             Tab::Now | Tab::Library => return,
         };
@@ -536,13 +842,26 @@ impl App {
             return;
         }
         let track = match self.active_tab {
-            Tab::Search => self.search_results.get(self.selected).cloned(),
+            Tab::Search => {
+                if self.search.viewing.is_some() {
+                    return;
+                }
+                self.search
+                    .results
+                    .tracks
+                    .get(self.search.cursor[SearchSection::Tracks as usize])
+                    .cloned()
+            }
             Tab::Queue => self.queue.get(self.selected).cloned(),
-            Tab::Now => return,
-            Tab::Library => return,
+            Tab::Now | Tab::Library => return,
         };
         let Some(track) = track else { return };
-        let queue_index = if self.active_tab == Tab::Search {
+        let queue_index = if self.active_tab == Tab::Search
+            && self.search.active_section == SearchSection::Tracks
+        {
+            // ponytail: append not replace — search results are loose items by
+            // relevance, not a coherent sequence like a playlist/library view.
+            // Library play_drilldown_track/play_fav_track replace queue instead.
             if !self.queue.iter().any(|t| t.id == track.id) {
                 Arc::make_mut(&mut self.queue).push(track.clone());
             }
@@ -705,12 +1024,18 @@ impl App {
     }
 
     pub fn play_drilldown_track(&mut self) {
-        let (track, remaining) = match self.library.viewing.as_ref() {
-            Some(v) => match v.tracks.get(v.cursor) {
+        let (track, remaining) = if let Some(ref v) = self.search.viewing {
+            match v.tracks.get(v.cursor) {
                 Some(t) => (t.clone(), v.tracks[v.cursor..].to_vec()),
                 None => return,
-            },
-            None => return,
+            }
+        } else if let Some(ref v) = self.library.viewing {
+            match v.tracks.get(v.cursor) {
+                Some(t) => (t.clone(), v.tracks[v.cursor..].to_vec()),
+                None => return,
+            }
+        } else {
+            return;
         };
         self.queue = Arc::new(remaining);
         self.stream_track_bg(track, 0);
@@ -730,7 +1055,12 @@ impl App {
     }
 
     pub fn add_current_track_to_queue(&mut self) {
-        let track = if let Some(ref viewing) = self.library.viewing {
+        let track = if let Some(ref viewing) = self.search.viewing {
+            match viewing.tracks.get(viewing.cursor) {
+                Some(t) => t.clone(),
+                None => return,
+            }
+        } else if let Some(ref viewing) = self.library.viewing {
             match viewing.tracks.get(viewing.cursor) {
                 Some(t) => t.clone(),
                 None => return,
@@ -753,7 +1083,9 @@ impl App {
     }
 
     pub fn add_all_tracks_to_queue(&mut self) {
-        let tracks: Vec<Track> = if let Some(ref viewing) = self.library.viewing {
+        let tracks: Vec<Track> = if let Some(ref viewing) = self.search.viewing {
+            viewing.tracks.clone()
+        } else if let Some(ref viewing) = self.library.viewing {
             viewing.tracks.clone()
         } else if self.library.active_section == LibrarySection::FavTracks {
             match self.library.fav_tracks.as_ref() {
@@ -800,7 +1132,13 @@ impl App {
 
     pub fn current_list_len(&self) -> usize {
         match self.active_tab {
-            Tab::Search => self.search_results.len(),
+            Tab::Search => {
+                if self.search.viewing.is_some() {
+                    self.search.viewing.as_ref().map_or(0, |v| v.tracks.len())
+                } else {
+                    self.search.current_len()
+                }
+            }
             Tab::Queue => self.queue.len(),
             Tab::Now => 0,
             Tab::Library => self.section_len(self.library.active_section),
@@ -837,6 +1175,23 @@ impl App {
     }
 
     pub fn next_track(&mut self) {
+        if self.active_tab == Tab::Search {
+            if let Some(ref mut v) = self.search.viewing {
+                let max = v.tracks.len();
+                if max > 0 {
+                    v.cursor = (v.cursor + 1) % max;
+                }
+            } else if self.search.focus == SearchFocus::Sidebar {
+                self.search.active_section = self.search.active_section.next();
+            } else {
+                let section = self.search.active_section as usize;
+                let max = self.search.current_len();
+                if max > 0 {
+                    self.search.cursor[section] = (self.search.cursor[section] + 1) % max;
+                }
+            }
+            return;
+        }
         let len = self.current_list_len();
         if len > 0 {
             self.selected = (self.selected + 1) % len;
@@ -844,6 +1199,27 @@ impl App {
     }
 
     pub fn prev_track(&mut self) {
+        if self.active_tab == Tab::Search {
+            if let Some(ref mut v) = self.search.viewing {
+                let max = v.tracks.len();
+                if max > 0 {
+                    v.cursor = if v.cursor == 0 { max - 1 } else { v.cursor - 1 };
+                }
+            } else if self.search.focus == SearchFocus::Sidebar {
+                self.search.active_section = self.search.active_section.prev();
+            } else {
+                let section = self.search.active_section as usize;
+                let max = self.search.current_len();
+                if max > 0 {
+                    self.search.cursor[section] = if self.search.cursor[section] == 0 {
+                        max - 1
+                    } else {
+                        self.search.cursor[section] - 1
+                    };
+                }
+            }
+            return;
+        }
         let len = self.current_list_len();
         if len > 0 {
             self.selected = if self.selected == 0 {
@@ -954,6 +1330,15 @@ impl App {
         self.player.set_volume(v);
         self.save_settings();
     }
+
+    pub fn clear_search(&mut self) {
+        if self.active_tab != Tab::Search {
+            return;
+        }
+        self.search = SearchState::new();
+        self.input_mode = InputMode::Normal;
+        self.status_msg = self.lang.strings().status_search_cleared.to_string();
+    }
 }
 
 #[cfg(test)]
@@ -1030,5 +1415,326 @@ mod tests {
         let mut queue_index = None;
         let removed = App::remove_queue_index(&mut queue, &mut queue_index, 0);
         assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_search_history_caps_at_10() {
+        let mut state = SearchState::new();
+        for i in 0..12 {
+            state.record_history(&format!("query{i}"));
+        }
+        assert_eq!(state.history.len(), 10);
+        assert_eq!(state.history[0], "query11");
+        assert_eq!(state.history[9], "query2");
+        assert!(!state.history.iter().any(|h| h == "query0"));
+        assert!(!state.history.iter().any(|h| h == "query1"));
+    }
+
+    #[test]
+    fn test_search_history_moves_duplicate_to_front() {
+        let mut state = SearchState::new();
+        for i in 0..5 {
+            state.record_history(&format!("query{i}"));
+        }
+        // history: q4, q3, q2, q1, q0 — repeating q2 moves it to front
+        state.record_history("query2");
+        assert_eq!(state.history.len(), 5);
+        assert_eq!(state.history[0], "query2");
+        assert_eq!(state.history[1], "query4");
+        assert_eq!(state.history[2], "query3");
+        assert_eq!(state.history[3], "query1");
+        assert_eq!(state.history[4], "query0");
+    }
+
+    #[test]
+    fn test_search_history_navigation_up_down() {
+        let mut state = SearchState::new();
+        for i in 0..3 {
+            state.record_history(&format!("query{i}"));
+        }
+        // history: q2, q1, q0
+        state.input = "draft text".to_string();
+        assert_eq!(state.history_cursor, None);
+
+        // ↑ once → most recent
+        state.history_up();
+        assert_eq!(state.history_cursor, Some(0));
+        assert_eq!(state.input, "query2");
+        assert_eq!(state.draft, "draft text");
+
+        // ↑ again → older
+        state.history_up();
+        assert_eq!(state.history_cursor, Some(1));
+        assert_eq!(state.input, "query1");
+
+        // ↑ again → oldest
+        state.history_up();
+        assert_eq!(state.history_cursor, Some(2));
+        assert_eq!(state.input, "query0");
+
+        // ↑ at oldest → no change
+        state.history_up();
+        assert_eq!(state.history_cursor, Some(2));
+        assert_eq!(state.input, "query0");
+
+        // ↓ back one
+        state.history_down();
+        assert_eq!(state.history_cursor, Some(1));
+        assert_eq!(state.input, "query1");
+
+        // ↓ back to most recent
+        state.history_down();
+        assert_eq!(state.history_cursor, Some(0));
+        assert_eq!(state.input, "query2");
+
+        // ↓ at 0 → restore draft and exit navigation
+        state.history_down();
+        assert_eq!(state.history_cursor, None);
+        assert_eq!(state.input, "draft text");
+    }
+
+    #[test]
+    fn test_search_generation_discards_stale() {
+        let mut app = make_app_for_test();
+        app.search_generation = 5;
+
+        // Stale result (generation 3 < 5) should be silently ignored
+        let stale = SearchResults {
+            tracks: vec![make_track(99, "Stale")],
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchDone(Ok(stale), 3));
+        assert_eq!(app.search.results.tracks.len(), 0);
+        assert_eq!(app.search.results.albums.len(), 0);
+
+        // Current generation result (5) should update state
+        let current = SearchResults {
+            tracks: vec![make_track(1, "Current")],
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchDone(Ok(current), 5));
+        assert_eq!(app.search.results.tracks.len(), 1);
+        assert_eq!(app.search.results.tracks[0].title, "Current");
+
+        // Stale error should also be ignored
+        app.handle_event(AppEvent::SearchDone(Err("stale error".into()), 4));
+        // Status message should still reflect the last successful search
+        assert_eq!(app.status_msg, "1 resultados");
+    }
+
+    fn make_app_for_test() -> App {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let tidal = rt.block_on(async {
+            crate::tidal::TidalDaemonClient::spawn("tidal.py", "python3", "LOSSLESS")
+                .await
+                .expect("tidal.py must exist for this test")
+        });
+        App::new(tidal)
+    }
+
+    #[test]
+    fn test_search_persists_across_tab_switch() {
+        let mut app = make_app_for_test();
+        app.search.input = "radiohead".to_string();
+        app.search.results = SearchResults {
+            tracks: vec![make_track(1, "Karma Police")],
+            ..SearchResults::default()
+        };
+        app.search.active_section = SearchSection::Albums;
+        app.search.cursor = [3, 7, 0, 0];
+        app.search.focus = SearchFocus::Content;
+
+        // Cycle through all tabs and back to Search
+        app.next_tab(); // Queue
+        app.next_tab(); // Now
+        app.next_tab(); // Library
+        app.next_tab(); // back to Search
+
+        assert_eq!(app.search.input, "radiohead");
+        assert_eq!(app.search.results.tracks.len(), 1);
+        assert_eq!(app.search.results.tracks[0].title, "Karma Police");
+        assert_eq!(app.search.active_section, SearchSection::Albums);
+        assert_eq!(app.search.cursor, [3, 7, 0, 0]);
+        assert_eq!(app.search.focus, SearchFocus::Content);
+    }
+
+    #[test]
+    fn test_clear_search_resets_state() {
+        let mut app = make_app_for_test();
+        app.active_tab = Tab::Search;
+        app.search.input = "radiohead".to_string();
+        app.search.results = SearchResults {
+            tracks: vec![make_track(1, "Karma Police")],
+            ..SearchResults::default()
+        };
+        app.search.cursor = [3, 2, 1, 0];
+        app.search.focus = SearchFocus::Content;
+        app.search.active_section = SearchSection::Artists;
+
+        app.clear_search();
+
+        assert!(app.search.input.is_empty());
+        assert_eq!(app.search.results.tracks.len(), 0);
+        assert_eq!(app.search.results.albums.len(), 0);
+        assert_eq!(app.search.results.artists.len(), 0);
+        assert_eq!(app.search.results.playlists.len(), 0);
+        assert_eq!(app.search.cursor, [0; 4]);
+        assert_eq!(app.search.focus, SearchFocus::Sidebar);
+        assert_eq!(app.search.active_section, SearchSection::Tracks);
+        assert!(app.search.viewing.is_none());
+        assert_eq!(app.status_msg, "Búsqueda limpiada");
+    }
+
+    #[test]
+    fn test_search_more_appends_and_dedups() {
+        let mut app = make_app_for_test();
+        app.search_generation = 5;
+        app.search.active_section = SearchSection::Tracks;
+        app.search.loaded = [10, 0, 0, 0];
+        app.search.results = SearchResults {
+            tracks: vec![make_track(1, "A"), make_track(2, "B")],
+            ..SearchResults::default()
+        };
+        // full page: duplicate "B" + 9 new tracks (ids 3..=11)
+        let mut page2 = vec![make_track(2, "B")];
+        for id in 3..=11 {
+            page2.push(make_track(id, &format!("T{id}")));
+        }
+        let page2 = SearchResults {
+            tracks: page2,
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchMoreDone(
+            Ok(page2),
+            5,
+            SearchSection::Tracks,
+        ));
+
+        assert_eq!(app.search.results.tracks.len(), 11);
+        assert_eq!(app.search.results.tracks[2].title, "T3");
+        // duplicate "B" not appended → only 9 new items on top of the 10 already loaded
+        assert_eq!(app.search.loaded[0], 19);
+        assert!(!app.search.exhausted[0]);
+    }
+
+    #[test]
+    fn test_search_more_marks_exhausted_on_short_page() {
+        let mut app = make_app_for_test();
+        app.search_generation = 5;
+        app.search.loaded = [10, 0, 0, 0];
+        let page = SearchResults {
+            tracks: vec![make_track(3, "C"), make_track(4, "D"), make_track(5, "E")],
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchMoreDone(Ok(page), 5, SearchSection::Tracks));
+
+        assert_eq!(app.search.results.tracks.len(), 3);
+        assert_eq!(app.search.loaded[0], 13);
+        assert!(app.search.exhausted[0]);
+    }
+
+    #[test]
+    fn test_search_more_stale_discarded() {
+        let mut app = make_app_for_test();
+        app.search_generation = 5;
+        app.search.results = SearchResults {
+            tracks: vec![make_track(1, "A")],
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchMoreDone(
+            Ok(SearchResults {
+                tracks: vec![make_track(9, "Stale")],
+                ..SearchResults::default()
+            }),
+            3,
+            SearchSection::Tracks,
+        ));
+        assert_eq!(app.search.results.tracks.len(), 1);
+        assert_eq!(app.search.results.tracks[0].title, "A");
+        assert_eq!(app.search.loaded[0], 0);
+    }
+
+    #[test]
+    fn test_search_done_sets_loaded_and_exhausted() {
+        let mut app = make_app_for_test();
+        app.search_generation = 1;
+        let results = SearchResults {
+            tracks: vec![make_track(1, "A"), make_track(2, "B")],
+            artists: vec![Artist {
+                id: 1,
+                name: "X".to_string(),
+            }],
+            ..SearchResults::default()
+        };
+        app.handle_event(AppEvent::SearchDone(Ok(results), 1));
+
+        assert_eq!(app.search.loaded, [2, 0, 1, 0]);
+        // every section returned fewer than a full page → all exhausted
+        assert_eq!(app.search.exhausted, [true, true, true, true]);
+    }
+
+    #[test]
+    fn test_load_more_bg_guards() {
+        let mut app = make_app_for_test();
+
+        // not authenticated → status message, no request
+        app.load_more_bg();
+        assert_eq!(
+            app.status_msg,
+            app.lang.strings().status_login_required_short.to_string()
+        );
+        assert_eq!(app.search_generation, 0);
+
+        app.authenticated = true;
+        app.search.input = "radiohead".to_string();
+
+        // sidebar focus → no-op
+        app.search.focus = SearchFocus::Sidebar;
+        app.status_msg.clear();
+        app.load_more_bg();
+        assert_eq!(app.status_msg, "");
+        assert_eq!(app.search_generation, 0);
+
+        // content focus but empty input → no-op
+        app.search.focus = SearchFocus::Content;
+        app.search.input.clear();
+        app.status_msg.clear();
+        app.load_more_bg();
+        assert_eq!(app.status_msg, "");
+        assert_eq!(app.search_generation, 0);
+
+        // exhausted section → status message, no request
+        app.search.input = "radiohead".to_string();
+        app.search.loaded[0] = 10;
+        app.search.exhausted[0] = true;
+        app.load_more_bg();
+        assert_eq!(
+            app.status_msg,
+            app.lang.strings().search_no_more_results.to_string()
+        );
+        assert_eq!(app.search_generation, 0);
+    }
+
+    #[test]
+    fn test_clear_search_ignored_on_other_tab() {
+        let mut app = make_app_for_test();
+        app.active_tab = Tab::Queue;
+        app.search.input = "radiohead".to_string();
+        app.search.results = SearchResults {
+            tracks: vec![make_track(1, "Karma Police")],
+            ..SearchResults::default()
+        };
+        app.search.cursor = [3, 2, 1, 0];
+        app.search.focus = SearchFocus::Content;
+        app.search.active_section = SearchSection::Artists;
+
+        app.clear_search();
+
+        assert_eq!(app.search.input, "radiohead");
+        assert_eq!(app.search.results.tracks.len(), 1);
+        assert_eq!(app.search.cursor, [3, 2, 1, 0]);
+        assert_eq!(app.search.focus, SearchFocus::Content);
+        assert_eq!(app.search.active_section, SearchSection::Artists);
+        assert_ne!(app.status_msg, "Búsqueda limpiada");
     }
 }

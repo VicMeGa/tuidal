@@ -16,6 +16,16 @@ pub struct Strings {
     // Search
     pub search_placeholder: &'static str,
     pub search_results_title: &'static str,
+    pub search_sidebar_tracks: &'static str,
+    pub search_sidebar_albums: &'static str,
+    pub search_sidebar_artists: &'static str,
+    pub search_sidebar_playlists: &'static str,
+    pub search_no_tracks: &'static str,
+    pub search_no_albums: &'static str,
+    pub search_no_artists: &'static str,
+    pub search_no_playlists: &'static str,
+    pub search_load_more_hint: &'static str,
+    pub search_no_more_results: &'static str,
     // Queue
     pub queue_title: &'static str,
     // Now playing
@@ -49,6 +59,7 @@ pub struct Strings {
     pub hint_lang: &'static str,
     pub hint_add_queue: &'static str,
     pub hint_remove_queue: &'static str,
+    pub hint_search_clear: &'static str,
     // Library sidebar sections
     pub lib_playlists: &'static str,
     pub lib_mixes: &'static str,
@@ -84,6 +95,7 @@ pub struct Strings {
     pub status_press_l: &'static str,
     pub status_added_to_queue: &'static str,
     pub status_already_in_queue: &'static str,
+    pub status_search_cleared: &'static str,
 }
 
 static ES: Strings = Strings {
@@ -93,6 +105,16 @@ static ES: Strings = Strings {
     tab_library: "Biblioteca",
     search_placeholder: "Presiona / para buscar...",
     search_results_title: "Resultados",
+    search_sidebar_tracks: "Canciones",
+    search_sidebar_albums: "Álbumes",
+    search_sidebar_artists: "Artistas",
+    search_sidebar_playlists: "Listas",
+    search_no_tracks: "  Sin canciones",
+    search_no_albums: "  Sin álbumes",
+    search_no_artists: "  Sin artistas",
+    search_no_playlists: "  Sin listas",
+    search_load_more_hint: "Cargar más",
+    search_no_more_results: "Sin más resultados",
     queue_title: "Cola de reproducción",
     now_playing_empty: "Sin reproducción — presiona Enter en una canción",
     now_playing_title: "◈ Ahora reproduciendo",
@@ -121,6 +143,7 @@ static ES: Strings = Strings {
     hint_lang: "idioma",
     hint_add_queue: "añadir cola",
     hint_remove_queue: "eliminar",
+    hint_search_clear: "limpiar búsqueda",
     lib_playlists: "Listas",
     lib_mixes: "Mixes",
     lib_fav_tracks: "Favoritos",
@@ -150,6 +173,7 @@ static ES: Strings = Strings {
     status_press_l: "Presiona 'L' para iniciar sesión en Tidal",
     status_added_to_queue: "▶ Añadido a la cola",
     status_already_in_queue: "Ya está en la cola",
+    status_search_cleared: "Búsqueda limpiada",
 };
 
 static EN: Strings = Strings {
@@ -159,6 +183,16 @@ static EN: Strings = Strings {
     tab_library: "Library",
     search_placeholder: "Press / to search...",
     search_results_title: "Results",
+    search_sidebar_tracks: "Tracks",
+    search_sidebar_albums: "Albums",
+    search_sidebar_artists: "Artists",
+    search_sidebar_playlists: "Playlists",
+    search_no_tracks: "  No tracks",
+    search_no_albums: "  No albums",
+    search_no_artists: "  No artists",
+    search_no_playlists: "  No playlists",
+    search_load_more_hint: "Load more",
+    search_no_more_results: "No more results",
     queue_title: "Playback Queue",
     now_playing_empty: "Nothing playing — press Enter on a track",
     now_playing_title: "◈ Now Playing",
@@ -187,6 +221,7 @@ static EN: Strings = Strings {
     hint_lang: "language",
     hint_add_queue: "add queue",
     hint_remove_queue: "remove",
+    hint_search_clear: "clear search",
     lib_playlists: "Playlists",
     lib_mixes: "Mixes",
     lib_fav_tracks: "Favorites",
@@ -216,6 +251,7 @@ static EN: Strings = Strings {
     status_press_l: "Press 'L' to log in to Tidal",
     status_added_to_queue: "▶ Added to queue",
     status_already_in_queue: "Already in queue",
+    status_search_cleared: "Search cleared",
 };
 
 static DE: Strings = Strings {
@@ -225,6 +261,16 @@ static DE: Strings = Strings {
     tab_library: "Bibliothek",
     search_placeholder: "/ zum Suchen drücken...",
     search_results_title: "Ergebnisse",
+    search_sidebar_tracks: "Lieder",
+    search_sidebar_albums: "Alben",
+    search_sidebar_artists: "Künstler",
+    search_sidebar_playlists: "Playlists",
+    search_no_tracks: "  Keine Lieder",
+    search_no_albums: "  Keine Alben",
+    search_no_artists: "  Keine Künstler",
+    search_no_playlists: "  Keine Playlists",
+    search_load_more_hint: "Mehr laden",
+    search_no_more_results: "Keine weiteren Ergebnisse",
     queue_title: "Wiedergabeliste",
     now_playing_empty: "Keine Wiedergabe — Enter auf einem Titel drücken",
     now_playing_title: "◈ Jetzt läuft",
@@ -253,6 +299,7 @@ static DE: Strings = Strings {
     hint_lang: "Sprache",
     hint_add_queue: "hinzufügen",
     hint_remove_queue: "entfernen",
+    hint_search_clear: "Suche löschen",
     lib_playlists: "Playlists",
     lib_mixes: "Mixes",
     lib_fav_tracks: "Favoriten",
@@ -282,6 +329,7 @@ static DE: Strings = Strings {
     status_press_l: "'L' drücken um sich bei Tidal anzumelden",
     status_added_to_queue: "▶ Zur Warteschlange hinzugefügt",
     status_already_in_queue: "Bereits in der Warteschlange",
+    status_search_cleared: "Suche gelöscht",
 };
 
 static RO: Strings = Strings {
@@ -291,6 +339,16 @@ static RO: Strings = Strings {
     tab_library: "Bibliotecă",
     search_placeholder: "Apasă / pentru a căuta...",
     search_results_title: "Rezultate",
+    search_sidebar_tracks: "Piese",
+    search_sidebar_albums: "Albume",
+    search_sidebar_artists: "Artiști",
+    search_sidebar_playlists: "Playlisturi",
+    search_no_tracks: "  Nicio piesă",
+    search_no_albums: "  Niciun album",
+    search_no_artists: "  Niciun artist",
+    search_no_playlists: "  Niciun playlist",
+    search_load_more_hint: "Încarcă mai mult",
+    search_no_more_results: "Nu mai sunt rezultate",
     queue_title: "Coadă de redare",
     now_playing_empty: "Nimic nu rulează — apasă Enter pe o piesă",
     now_playing_title: "◈ Se redă acum",
@@ -319,6 +377,7 @@ static RO: Strings = Strings {
     hint_lang: "limbă",
     hint_add_queue: "adaugă coadă",
     hint_remove_queue: "elimină",
+    hint_search_clear: "șterge căutarea",
     lib_playlists: "Playlisturi",
     lib_mixes: "Mixuri",
     lib_fav_tracks: "Favorite",
@@ -348,6 +407,7 @@ static RO: Strings = Strings {
     status_press_l: "Apasă 'L' pentru a te autentifica în Tidal",
     status_added_to_queue: "▶ Adăugat în coadă",
     status_already_in_queue: "Deja în coadă",
+    status_search_cleared: "Căutare ștearsă",
 };
 
 impl Lang {
@@ -413,6 +473,15 @@ impl Lang {
             Lang::En => format!("Searching \"{q}\"..."),
             Lang::De => format!("Suche \"{q}\"..."),
             Lang::Ro => format!("Se caută \"{q}\"..."),
+        }
+    }
+
+    pub fn searching_more(self, _q: &str) -> String {
+        match self {
+            Lang::Es => "Cargando más...".to_string(),
+            Lang::En => "Loading more...".to_string(),
+            Lang::De => "Lade mehr...".to_string(),
+            Lang::Ro => "Se încarcă mai mult...".to_string(),
         }
     }
 

@@ -1,5 +1,5 @@
 //use crate::app::{App, InputMode, Tab};
-use crate::app::{App, InputMode, Tab};
+use crate::app::{App, InputMode, SearchFocus, SearchSection, Tab};
 use crate::library::{LibraryFocus, LibrarySection, LibraryViewing};
 use crate::player::PlayerState;
 use ratatui::{
@@ -44,6 +44,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     if app.device_code.is_some() {
         draw_login_overlay(f, app, area);
+    }
+    if app.show_help {
+        draw_help_menu(f, app, area);
     }
 }
 
@@ -164,7 +167,7 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
                     .fg(if is_searching { ACCENT } else { MUTED })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(app.search_input.as_str(), Style::default().fg(TEXT)),
+            Span::styled(app.search.input.as_str(), Style::default().fg(TEXT)),
             if is_searching {
                 Span::styled(
                     "▎",
@@ -175,7 +178,7 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Span::raw("")
             },
-            if app.search_input.is_empty() && !is_searching {
+            if app.search.input.is_empty() && !is_searching {
                 Span::styled(
                     app.lang.strings().search_placeholder,
                     Style::default().fg(DIM),
@@ -194,13 +197,344 @@ fn draw_search_tab(f: &mut Frame, app: &App, area: Rect) {
         chunks[0],
     );
 
-    draw_track_list(
+    if let Some(ref viewing) = app.search.viewing {
+        draw_search_viewing(f, viewing, chunks[1]);
+    } else {
+        draw_search_sidebar_content(f, app, chunks[1]);
+    }
+}
+
+fn draw_search_viewing(f: &mut Frame, viewing: &LibraryViewing, area: Rect) {
+    let breadcrumb = format!(" ← {} ", viewing.title);
+    let rows: Vec<Row> = viewing
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let is_sel = i == viewing.cursor;
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("{:>3}", i + 1),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.title, 36),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.artist_names(), 24),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(f, area, rows, &breadcrumb, viewing.cursor, 4, ACCENT);
+}
+
+fn draw_search_sidebar_content(f: &mut Frame, app: &App, area: Rect) {
+    let sidebar_border = if app.search.focus == SearchFocus::Sidebar {
+        ACCENT
+    } else {
+        DIM
+    };
+    let content_border = if app.search.focus == SearchFocus::Content {
+        ACCENT
+    } else {
+        DIM
+    };
+    let sidebar_w = (area.width * 20 / 100).max(16);
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(sidebar_w), Constraint::Min(0)])
+        .split(area);
+
+    draw_search_sidebar(f, app, chunks[0], sidebar_border);
+    draw_search_content(f, app, chunks[1], content_border);
+}
+
+fn draw_search_sidebar(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let sections = [
+        (SearchSection::Tracks, s.search_sidebar_tracks, "♫"),
+        (SearchSection::Albums, s.search_sidebar_albums, "◆"),
+        (SearchSection::Artists, s.search_sidebar_artists, "♛"),
+        (SearchSection::Playlists, s.search_sidebar_playlists, "≡"),
+    ];
+
+    let items: Vec<Line> = sections
+        .iter()
+        .map(|(sec, label, icon)| {
+            let is_active = *sec == app.search.active_section;
+            let count = app.search.len(*sec);
+            let fg = if is_active { ACCENT } else { MUTED };
+            let style = if is_active {
+                Style::default()
+                    .fg(BG)
+                    .bg(ACCENT)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {} ", icon), Style::default().fg(fg)),
+                Span::styled(format!("{label}"), style),
+                Span::styled(
+                    format!(" ({count})"),
+                    Style::default().fg(if is_active { BG } else { DIM }),
+                ),
+            ])
+        })
+        .collect();
+
+    f.render_widget(
+        Paragraph::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .title(Span::styled(
+                    format!(" {} ", s.search_results_title),
+                    Style::default().fg(MUTED),
+                )),
+        ),
+        area,
+    );
+}
+
+fn draw_search_content(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
+    let content_area = chunks[0];
+    match app.search.active_section {
+        SearchSection::Tracks => draw_search_tracks(f, app, content_area, border_color),
+        SearchSection::Albums => draw_search_albums(f, app, content_area, border_color),
+        SearchSection::Artists => draw_search_artists(f, app, content_area, border_color),
+        SearchSection::Playlists => draw_search_playlists(f, app, content_area, border_color),
+    }
+    draw_search_footer(f, app, chunks[1]);
+}
+
+fn draw_search_footer(f: &mut Frame, app: &App, area: Rect) {
+    let section = app.search.active_section;
+    let idx = section as usize;
+    let shown = app.search.loaded[idx];
+    if app.search.focus != SearchFocus::Content || shown == 0 {
+        return;
+    }
+    let text = if app.search.exhausted[idx] {
+        format!("  {}", app.lang.strings().search_no_more_results)
+    } else {
+        format!(
+            "  [m] {} — {}",
+            app.lang.strings().search_load_more_hint,
+            app.lang.results_count(shown)
+        )
+    };
+    f.render_widget(Paragraph::new(text).style(Style::default().fg(DIM)), area);
+}
+
+fn draw_search_tracks(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let tracks = &app.search.results.tracks;
+    let cursor = app.search.cursor[SearchSection::Tracks as usize];
+    if tracks.is_empty() {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.search_no_tracks
+            })
+            .style(Style::default().fg(MUTED))
+            .block(default_content_block(s.search_sidebar_tracks, border_color)),
+            area,
+        );
+        return;
+    }
+    let rows: Vec<Row> = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let is_sel = i == cursor;
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("{:>3}", i + 1),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.title, 36),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&t.artist_names(), 24),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(t.duration_str(), Style::default().fg(MUTED))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(
         f,
-        app,
-        chunks[1],
-        &app.search_results,
-        app.selected,
-        app.lang.strings().search_results_title,
+        area,
+        rows,
+        s.search_sidebar_tracks,
+        cursor,
+        4,
+        border_color,
+    );
+}
+
+fn draw_search_albums(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let albums = &app.search.results.albums;
+    let cursor = app.search.cursor[SearchSection::Albums as usize];
+    if albums.is_empty() {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.search_no_albums
+            })
+            .style(Style::default().fg(MUTED))
+            .block(default_content_block(s.search_sidebar_albums, border_color)),
+            area,
+        );
+        return;
+    }
+    let rows: Vec<Row> = albums
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let is_sel = i == cursor;
+            Row::new(vec![
+                Cell::from(Span::styled("◆ ", Style::default().fg(ACCENT))),
+                Cell::from(Span::styled(
+                    truncate(&a.title, 40),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    truncate(&a.artist_names(), 28),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled(
+                    app.lang.tracks_count(a.number_of_tracks),
+                    Style::default().fg(DIM),
+                )),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(
+        f,
+        area,
+        rows,
+        s.search_sidebar_albums,
+        cursor,
+        3,
+        border_color,
+    );
+}
+
+fn draw_search_artists(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let artists = &app.search.results.artists;
+    let cursor = app.search.cursor[SearchSection::Artists as usize];
+    if artists.is_empty() {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.search_no_artists
+            })
+            .style(Style::default().fg(MUTED))
+            .block(default_content_block(
+                s.search_sidebar_artists,
+                border_color,
+            )),
+            area,
+        );
+        return;
+    }
+    let rows: Vec<Row> = artists
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let is_sel = i == cursor;
+            Row::new(vec![
+                Cell::from(Span::styled("♛ ", Style::default().fg(ACCENT2))),
+                Cell::from(Span::styled(
+                    truncate(&a.name, 40),
+                    style_item_name(is_sel, GOLD),
+                )),
+                Cell::from(Span::styled("", Style::default())),
+                Cell::from(Span::styled("Artist", Style::default().fg(DIM))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(
+        f,
+        area,
+        rows,
+        s.search_sidebar_artists,
+        cursor,
+        3,
+        border_color,
+    );
+}
+
+fn draw_search_playlists(f: &mut Frame, app: &App, area: Rect, border_color: Color) {
+    let s = app.lang.strings();
+    let playlists = &app.search.results.playlists;
+    let cursor = app.search.cursor[SearchSection::Playlists as usize];
+    if playlists.is_empty() {
+        f.render_widget(
+            Paragraph::new(if app.loading {
+                s.loading
+            } else {
+                s.search_no_playlists
+            })
+            .style(Style::default().fg(MUTED))
+            .block(default_content_block(
+                s.search_sidebar_playlists,
+                border_color,
+            )),
+            area,
+        );
+        return;
+    }
+    let rows: Vec<Row> = playlists
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let is_sel = i == cursor;
+            Row::new(vec![
+                Cell::from(Span::styled("≡ ", Style::default().fg(ACCENT2))),
+                Cell::from(Span::styled(
+                    truncate(&p.title, 40),
+                    style_item_name(is_sel, ACCENT),
+                )),
+                Cell::from(Span::styled(
+                    app.lang.tracks_count(p.number_of_tracks),
+                    Style::default().fg(MUTED),
+                )),
+                Cell::from(Span::styled("Playlist", Style::default().fg(DIM))),
+            ])
+            .style(row_bg(i, is_sel))
+        })
+        .collect();
+    render_item_table(
+        f,
+        area,
+        rows,
+        s.search_sidebar_playlists,
+        cursor,
+        3,
+        border_color,
     );
 }
 
@@ -705,24 +1039,36 @@ fn draw_player(f: &mut Frame, app: &App, area: Rect) {
 
     let s = app.lang.strings();
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            hint_key("Enter", s.hint_play),
-            hint_key("a", s.hint_add_queue),
-            hint_key("d", s.hint_remove_queue),
-            hint_key("Space", s.hint_pause),
-            hint_key("n/p", s.hint_next_prev),
-            hint_key("←/→", s.hint_seek),
-            hint_key("+/-", s.hint_volume),
-            hint_key("Tab", s.hint_view),
-            hint_key("1/2/3", s.hint_quality),
-            hint_key("q", s.hint_quit),
-            hint_key("i", s.hint_library),
-            hint_key("F", s.hint_fav_tracks),
-            hint_key("A", s.hint_fav_albums),
-            hint_key("Alt+L", s.hint_lang),
-        ])),
+        Paragraph::new(Line::from(
+            get_all_hints(s)
+                .into_iter()
+                .map(|(k, d)| hint_key(k, d))
+                .collect::<Vec<_>>(),
+        )),
         inner[2],
     );
+}
+
+pub fn get_all_hints(s: &crate::i18n::Strings) -> Vec<(&str, &str)> {
+    vec![
+        ("Ctrl+U", &s.hint_search_clear),
+        ("Enter", &s.hint_play),
+        ("a", &s.hint_add_queue),
+        ("d", &s.hint_remove_queue),
+        ("Space", &s.hint_pause),
+        ("n/p", &s.hint_next_prev),
+        ("←/→", &s.hint_seek),
+        ("+/-", &s.hint_volume),
+        ("Tab", &s.hint_view),
+        ("Alt+1/2/3", &s.hint_quality),
+        ("1-4", "Navegar pestañas"),
+        ("q", &s.hint_quit),
+        ("i", &s.hint_library),
+        ("F", &s.hint_fav_tracks),
+        ("A", &s.hint_fav_albums),
+        ("Alt+L", &s.hint_lang),
+        ("?", "Alternar ayuda"),
+    ]
 }
 
 fn hint_key<'a>(key: &'a str, desc: &'a str) -> Span<'a> {
@@ -747,6 +1093,42 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         ]))
         .style(Style::default().bg(BG)),
         area,
+    );
+}
+
+fn draw_help_menu(f: &mut Frame, app: &App, area: Rect) {
+    let popup = centered_rect(50, 40, area);
+    f.render_widget(Clear, popup);
+
+    let s = app.lang.strings();
+    let hints = get_all_hints(s);
+
+    let rows: Vec<Row> = hints
+        .iter()
+        .map(|(k, d)| {
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("[{}]", k),
+                    Style::default().fg(ACCENT),
+                )),
+                Cell::from(Span::styled(*d, Style::default().fg(TEXT))),
+            ])
+        })
+        .collect();
+
+    f.render_widget(
+        Table::new(rows, [Constraint::Length(12), Constraint::Min(20)]).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .title(Span::styled(
+                    " Ayuda ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ))
+                .style(Style::default().bg(BG2)),
+        ),
+        popup,
     );
 }
 
